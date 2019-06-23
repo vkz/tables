@@ -550,63 +550,86 @@
 ;; idea such slot may need to be looked up on the metatable chain with get.
 
 
+;;** - #%table --------------------------------------------------- *;;
+
+
 (define-syntax (#%table stx)
   (syntax-parse stx
-    #:context (list '|{}| (with-syntax (((_ e ...) stx))
-                            ;; doesn't seem to effect paren shape in error msg
-                            (syntax-property (syntax/loc stx {e ...}) 'paren-shape #\{)))
-    ((_ mt:id options:option ... entry:table-entry ...)
-     (syntax/loc stx (let* ((opts (list (list 'options.kw options.opt) ...))
-                            (h (ht entry ...))
-                            (make-table (table-maker mt))
-                            (t (make-table h mt))
-                            (metamethod (or? (meta-dict-ref t :<setmeta>) identity))
-                            (undefs (for/list (((k v) (in-mutable-hash h))
-                                               #:when (undefined? v))
-                                      k)))
-                       (for-each (curry dict-remove! h) undefs)
-                       ;; TODO runtime error reporting here is not great - shows
-                       ;; full expansion in trace. Is there a way to show in terms
-                       ;; of actual expression i.e. table constructor? Case in
-                       ;; point when <spec> contract fails.
-                       (add-traits (metamethod t) opts))))))
+    ((_ <mt> ((kw trait) ...) (entry ...))
+     (syntax/loc stx
+       (let* ((h (ht entry ...))
+              (make-table (table-maker <mt>))
+              (t (make-table h <mt>))
+              (metamethod (or? (meta-dict-ref t :<setmeta>) identity))
+              (undefs (for/list (((k v) (in-mutable-hash h))
+                                 #:when (undefined? v))
+                        k)))
+         (for-each (curry dict-remove! h) undefs)
+         ;; TODO runtime error reporting here is not great - shows
+         ;; full expansion in trace. Is there a way to show in terms
+         ;; of actual expression i.e. table constructor? Case in
+         ;; point when <spec> contract fails.
+         (add-traits (metamethod t) (list (list 'kw trait) ...)))))))
 
 
-;;* #%app -------------------------------------------------------- *;;
+;;** - table --------------------------------------------------- *;;
 
 
 (define-syntax-parser table-instance
 
-  ;; TODO parse mt, #:kw traits and entries here then call #%table with
-  ;; those parsed - would simplify implementing custom #%table.
-
-  ;; TODO would it make sense to use <table> binding at the call site?
-  ;; Thereby allowing the user to swap it for something else? Beware
-  ;; accidentally making <table> dynamically scoped though? I think the same
-  ;; trick as with #%table would work here.
-  ((_ (~optional (~seq mt:id) #:defaults ((mt #'<table>))) e ...)
+  ((_ #:mt ~! mt:expr entry:table-entry ...)
    #:with #%table (datum->syntax this-syntax '#%table this-syntax)
-   (syntax/loc this-syntax (#%table mt e ...)))
+   (syntax/loc this-syntax
+     (let ((<mt> mt))
+       (unless (table? <mt>) (raise-argument-error 'table "table?" <mt>))
+       (#%table <mt> () (entry ...)))))
 
-  ;; NOTE we use dotted pair to match to correctly cover application
-  ;; expressions that may be using dot-notation themselves e.g. (foo x . y)
-  ((_ . rest)
-   ;; delegate to Racket #%app
-   (syntax/loc this-syntax (racket/#%app . rest))))
+  ((_ entry:table-entry ...)
+   (syntax/loc this-syntax
+     (table-instance #:mt <table> entry ...))))
+
+
+;;** - {#%app} --------------------------------------------------- *;;
+
+
+;; TODO would it make sense to use <table> binding at the call site? Thereby
+;; allowing the user to swap it for something else? Beware accidentally making
+;; <table> dynamically scoped though? I think the same trick as with #%table would
+;; work here.
 
 
 (define-syntax (#%app stx)
-  (with-syntax (((_ . rest) stx))
-    (if (eq? #\{ (syntax-property stx 'paren-shape))
-        ;; {} => delegate to table constructor
-        ;; wrap in call-site context so we use its #%table
-        (datum->syntax stx (syntax-e #'(table-instance . rest)) stx)
-        ;; else => delegate to Racket's #%app
+  (if (eq? #\{ (syntax-property stx 'paren-shape))
+
+      ;; {} => delegate to #%table constructor
+      (syntax-parse stx
+        #:context (list '|{}| (with-syntax (((_ e ...) stx))
+                                ;; doesn't seem to effect paren shape in error msg
+                                (syntax-property (syntax/loc stx {e ...})
+                                                 'paren-shape #\{)))
+        ((_ (~optional (~seq mt:id) #:defaults ((mt #'<table>)))
+            trait:option ...
+            entry:table-entry ...)
+         #:with #%table (datum->syntax stx '#%table stx)
+         (syntax/loc stx
+           ;; (#%table <mt> ((keyword trait) ...) ((key val) ...))
+           (cond
+             ((table? mt) (#%table mt ((trait.kw trait.opt) ...) (entry ...)))
+             ((procedure? mt) (mt (#%table <table> ((trait.kw trait.opt) ...) (entry ...))))
+             (else (raise-argument-error '|{}| "table? or procedure?" mt))))))
+
+      ;; else => delegate to Racket's #%app
+      (with-syntax (((_ . rest) stx))
         (syntax/loc stx (racket/#%app . rest)))))
 
 
 (module+ test
   (define/checked <c> {(:<setmeta> (λ (t) (set t :answer 42)))})
+
+  (test-case "table constructors"
+    (check-equal? (table-instance) {})
+    (check-equal? (table-instance (:a 1)) {(:a 1)})
+    (check-equal? (table-instance #:mt <c> (:a 1)) {<c> (:a 1)}))
 
   (test-case "undefined values"
     (define t {(:a 1) (:b 2)})
@@ -622,7 +645,7 @@
     (check-eq? (dict-ref c :answer) 42))
 
   (test-case "Use #%table from macro invocation context"
-    (let-syntax ([#%table (syntax-rules () [(_ mt entry ...) (ht entry ...)])])
+    (let-syntax ([#%table (syntax-rules () [(_ mt (trait ...) (entry ...)) (ht entry ...)])])
       (check-equal? (ht (:a 1)) {(:a 1)}))))
 
 
