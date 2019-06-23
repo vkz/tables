@@ -318,8 +318,15 @@ and after. We have it easy, since metatables are just tables, with their own
 slots, as soon as we swap an mt for another, its slots are available to the
 instance unless it shadows them with slots of the same name.
 
-*** TODO ~table~ constructor
-SCHEDULED: <2019-06-23 Sun>
+*** DONE ~table~ constructor
+CLOSED: [2019-06-23 Sun 15:50] SCHEDULED: <2019-06-23 Sun>
+- State "DONE"       from "STARTED"    [2019-06-23 Sun 15:50] \\
+  We now delegate {...} => (table ...) => (#%table ...)
+- State "TODO"       from "STARTED"    [2019-06-23 Sun 15:18]
+:LOGBOOK:
+CLOCK: [2019-06-23 Sun 15:30]--[2019-06-23 Sun 15:50] =>  0:20
+CLOCK: [2019-06-23 Sun 15:13]--[2019-06-23 Sun 15:18] =>  0:05
+:END:
 
 for when you don't want to use {} syntax or your need to compute metatable.
 #+begin_src racket
@@ -330,8 +337,15 @@ for when you don't want to use {} syntax or your need to compute metatable.
          (:b 2))
 #+end_src
 
-*** TODO {proc ...} constructor
-SCHEDULED: <2019-06-23 Sun>
+*** DONE {proc ...} constructor
+CLOSED: [2019-06-23 Sun 19:10] SCHEDULED: <2019-06-23 Sun>
+- State "DONE"       from "STARTED"    [2019-06-23 Sun 19:10] \\
+  Also implemented simple (table ...) constructor
+- State "TODO"       from "STARTED"    [2019-06-23 Sun 15:54]
+:LOGBOOK:
+CLOCK: [2019-06-23 Sun 16:02]--[2019-06-23 Sun 19:10] =>  3:08
+CLOCK: [2019-06-23 Sun 15:52]--[2019-06-23 Sun 15:54] =>  0:02
+:END:
 
 We already allow {<mt> ...} constructor. Say we stick with only id in the app
 position there but also allow it to be a procedure, which we call. So it can be in
@@ -346,8 +360,9 @@ We don't really achieve much with that, cause we could just as easily call this:
 
 So is there any benefit to this?
 
-**** TODO fix {(void)} constructor
-SCHEDULED: <2019-06-23 Sun>
+**** DONE fix {(void)} constructor
+CLOSED: [2019-06-23 Sun 19:33] SCHEDULED: <2019-06-23 Sun>
+- State "DONE"       from "TODO"       [2019-06-23 Sun 19:33]
   [2019-06-19 Wed]
 
 why does this produce a table?
