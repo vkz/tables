@@ -14,7 +14,8 @@
 (require (only-in prelude ht get: set:))
 
 
-(provide (rename-out [#%top table-#%top] [#%app table-#%app])
+(provide (rename-out [#%top table-#%top] [#%app table-#%app]
+                     [table-instance table])
          #%table #%.
          get set rm meta-dict-ref
          isa isa?
@@ -574,32 +575,33 @@
 ;;* #%app -------------------------------------------------------- *;;
 
 
+(define-syntax-parser table-instance
+
+  ;; TODO parse mt, #:kw traits and entries here then call #%table with
+  ;; those parsed - would simplify implementing custom #%table.
+
+  ;; TODO would it make sense to use <table> binding at the call site?
+  ;; Thereby allowing the user to swap it for something else? Beware
+  ;; accidentally making <table> dynamically scoped though? I think the same
+  ;; trick as with #%table would work here.
+  ((_ (~optional (~seq mt:id) #:defaults ((mt #'<table>))) e ...)
+   #:with #%table (datum->syntax this-syntax '#%table this-syntax)
+   (syntax/loc this-syntax (#%table mt e ...)))
+
+  ;; NOTE we use dotted pair to match to correctly cover application
+  ;; expressions that may be using dot-notation themselves e.g. (foo x . y)
+  ((_ . rest)
+   ;; delegate to Racket #%app
+   (syntax/loc this-syntax (racket/#%app . rest))))
+
+
 (define-syntax (#%app stx)
-  (if (eq? #\{ (syntax-property stx 'paren-shape))
-
-      ;; parse {#%app}
-      (syntax-parse stx
-
-        ;; TODO parse mt, #:kw traits and entries here then call #%table with
-        ;; those parsed - would simplify implementing custom #%table.
-
-        ;; TODO would it make sense to use <table> binding at the call site?
-        ;; Thereby allowing the user to swap it for something else? Beware
-        ;; accidentally making <table> dynamically scoped though? I think the same
-        ;; trick as with #%table would work here.
-        ((_ (~optional (~seq mt:id) #:defaults ((mt #'<table>))) e ...)
-         #:with #%table (datum->syntax stx '#%table stx)
-         (syntax/loc stx (#%table mt e ...)))
-
-        ;; NOTE we use dotted pair to match to correctly cover application
-        ;; expressions that may be using dot-notation themselves e.g. (foo x . y)
-        ((_ . rest)
-         ;; delegate to Racket #%app
-         (syntax/loc stx (racket/#%app . rest))))
-
-      ;; parse non {#%app}
-      (with-syntax (((_ . rest) stx))
-        ;; delegate to Racket's #:app
+  (with-syntax (((_ . rest) stx))
+    (if (eq? #\{ (syntax-property stx 'paren-shape))
+        ;; {} => delegate to table constructor
+        ;; wrap in call-site context so we use its #%table
+        (datum->syntax stx (syntax-e #'(table-instance . rest)) stx)
+        ;; else => delegate to Racket's #%app
         (syntax/loc stx (racket/#%app . rest)))))
 
 
