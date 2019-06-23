@@ -21,10 +21,7 @@
          isa isa?
          table?
          table-meta table-dict
-         ;; TODO while providing these maybe useful, they are effectively "raw"
-         ;; procedures to manipulate table structs a-la our gen:dict interface. We
-         ;; may want to also provide set-meta and set-dict that call metamethods
-         ;; e.g. <setmeta> as needed, so more like our set procedure would.
+         set-meta
          set-table-meta! set-table-dict!
          <table>
          <spec> <open> <closed>
@@ -49,7 +46,7 @@
       'debug)))
 
 
-;;* undefined aware logic ---------------------------------------- *;;
+;;* Undefined aware logic ---------------------------------------- *;;
 
 
 (module logic racket
@@ -484,10 +481,25 @@
     (check-eq? (get t :e) 5)))
 
 
-;;* #%table ------------------------------------------------------ *;;
+;;* Constructors ------------------------------------------------- *;;
 
 
 (define <table> (make-table (ht) undefined))
+
+
+;; Similar to set-table-meta! but ensures that <setmeta> method of the new
+;; metatable runs when present
+(define/contract (set-meta t mt)
+  (-> table? table? table?)
+  (define metamethod (or? (dict-ref mt :<setmeta>) identity))
+  (set-table-meta! t mt)
+  (metamethod t))
+
+
+;; TODO consider implementing set-dict which is like set-table-dict! but it must
+;; preserve the same table struct type, trim possible undefined values and call
+;; <setmeta> when present. Essentially it does what #%table's expansion does. We
+;; maybe able to replace part of #%table's expansion with a call to set-dict.
 
 
 (begin-for-syntax
@@ -629,7 +641,9 @@
   (test-case "table constructors"
     (check-equal? (table-instance) {})
     (check-equal? (table-instance (:a 1)) {(:a 1)})
-    (check-equal? (table-instance #:mt <c> (:a 1)) {<c> (:a 1)}))
+    (check-equal? (table-instance #:mt <c> (:a 1)) {<c> (:a 1)})
+    ;; set-meta
+    (check-eq? (dict-ref (set-meta {} <c>) :answer) 42))
 
   (test-case "undefined values"
     (define t {(:a 1) (:b 2)})
