@@ -1,0 +1,1793 @@
+TABLES  -*- mode: org; fill-column: 82 -*-
+#+CATEGORY: tables
+#+STARTUP: content
+#+seq_todo: TODO STARTED(s/@) WAITING(w@/@) DELEGATED(l@/@) APPT | DONE(d@/@) DEFERRED(f@/@) CANCELLED(x@/@) IDEA(i/@)
+#+TAGS: { SCHOOL(s) BLOG(b) TIL(t) }
+#+PROPERTY: Effort_ALL 0 0:10 0:30 1:00 2:00 3:00 4:00 5:00 6:00 7:00
+#+COLUMNS: %30ITEM(Task) %CLOCKSUM %15Effort(Effort){:}
+
+* Tables
+
+One cool test of MTP power is to implement MOP using MTP with the entire shebang
+of classes, generic functions etc. Has a cute circularity to it, too.
+
+How do we know our MTP implementation is useful?
+- implement fcgi.rkt with it,
+- implement MOP, then with that MOP implementation implement tables?
+
+And of course experiment with generic operations that should work for many types,
+especially having defined a hierarchy that includes builtin Racket types. Possible
+candidates are setters, converters (as), printers, getters, etc (see Swindle's
+/extra.rkt/ for more ideas).
+
+#+begin_src racket
+  (cond
+    [(string? obj) <string>])
+  ;; where <string> is bound to string-metatable
+#+end_src
+
+** DONE #lang racket/tables racket/base/tables
+CLOSED: [2019-06-23 Sun 14:01] SCHEDULED: <2019-06-23 Sun>
+- State "DONE"       from "STARTED"    [2019-06-23 Sun 14:01] \\
+  Tables now moved to its own multi package that provides 2 collections: tables and
+  racket. I even simplified the way #langs are exposed - no need for foo-lang.rkt
+  indirection I do in prelude.
+:LOGBOOK:
+CLOCK: [2019-06-23 Sun 12:53]--[2019-06-23 Sun 14:01] =>  1:08
+:END:
+
+IIUC our tables package will be 'multi extending racket/ and racket/base
+collections as needed:
+- racket/tables.rkt
+- racket/base/tables.rkt
+
+** Metamethods
+
+Consider :<method-name> as convention:
+- :<get>
+- :<insert>
+- :<setmeta>
+- :<proc>
+- maybe <set>
+- maybe <isa> defaults to returning metatable
+- maybe <isa?> defaults to testing against metatables in the chain
+
+Why have <isa> and <isa?> as metatables? Well, among other things we allow
+multiple inheritance, so the question of identity can no longer be trivially
+answered. While we can provide default implementations that would cover most cases
+(including the default implementation of multiple inheritance), in the end users
+must be final arbiters and suppliers of definitions since they are the ones being
+creative with semantics.
+
+** DONE gen:dict interface for tables
+CLOSED: [2019-05-30 Thu 15:09]
+- State "DONE"       from "STARTED"    [2019-05-30 Thu 15:09] \\
+  Implemented gen:dict, which means gen:associative works and therefore get: and
+  set: work too.
+- State "STARTED"    from "TODO"       [2019-05-30 Thu 15:08]
+:LOGBOOK:
+CLOCK: [2019-05-30 Thu 15:08]--[2019-05-30 Thu 15:09] =>  0:01
+:END:
+
+to serve as "raw" operations - the kind that only works on the main contained and
+is oblivious to metatables and inheritance. Think ~rawget~ and ~rawset~ in Lua.
+
+** Basic metatable semantics
+
+*** TODO allow nested keys in get and set [0/4]
+
+**** TODO get nested keys
+SCHEDULED: <2019-06-23 Sun>
+
+(get t :a :b :c) ala our get:
+
+**** TODO allow #:default in get
+SCHEDULED: <2019-06-23 Sun>
+
+**** TODO set nested keys (allow intermediate key missing)
+SCHEDULED: <2019-06-23 Sun>
+
+basically same semantics as our set: but user may specify what associative data
+structure to insert at a missing intermediate key. Simplest solution would
+probably be to introduce a parameter and have it checked inside set whenever such
+missing struct needs to be inserted. Intuition tells me that such cases maybe rare
+enough that parameter based solution is perfectly fine with rarely incured
+overhead. However, if I'm wrong and in fact this problem occurs e.g. in a tight
+loop looking the parameter may incur nontrivial overhead. We could remedy that by
+employing the same #%form trick as with #%top or #%app etc that users may redefine
+in their own code. That is ~set~ will rely on e.g. #%assoc-missing being bound at
+invocation site to an associative structure constructor function that would
+produce an instance of said structure to be inserted for the missing key value.
+Far as I can tell this has no overhead whatsoever. Obviously, tables.rkt and #lang
+racket/tables will provide the default binding e.g. to the ~{}~ constructor.
+
+**** TODO consider allowing #:default or #:missing in set
+SCHEDULED: <2019-06-23 Sun>
+
+as an adhoc way to override the associative data structure to use in place of a
+value for a missing key
+
+*** IDEA table constructor with self implicitly bound to the instance
+CLOSED: [2019-06-22 Sat 15:56]
+
+what if we had ~self~ implicitly bound in the table constructor, at least in value
+(rhs expressions) positions. This would probably require constructing table
+instances lazily since self may appear in several parallel entries in the
+constructor expression.
+
+haven't looked at yet but [[https://jsonnet.org/][jsonnet templating language]] may have this and more ideas
+
+*** TODO rethink undefined aware logic
+
+I don't think its worked out so far. Too easy to use the wrong logic combinator:
+Racket vs tables. Perhaps the answer is to have ? signify that given undefined
+value it should cast it to #f (that is we want to use it in Racket context) or
+return any value other than undefined as is:
+
+#+begin_src racket
+  (? val)
+  (? (get t :k))
+  t:k?
+#+end_src
+
+*** DONE default <get> metamethod semantics
+CLOSED: [2019-05-30 Thu 16:14]
+- State "DONE"       from "STARTED"    [2019-05-30 Thu 16:14]
+- State "STARTED"    from "TODO"       [2019-05-30 Thu 15:28]
+:LOGBOOK:
+CLOCK: [2019-05-30 Thu 15:28]--[2019-05-30 Thu 16:14] =>  0:46
+:END:
+
+Inspired by Lua but instead of ~__index~ indirection a-la Lua we lookup missing
+key in the metatable unless :get metamethod is defined, then we call it passing
+self. To make sure we don't lose any flexibility that Lua semantics affords we
+could also allow setting :<get> to a table, in which case it would perform a
+lookup there. I don't think it adds anything beyond what a function could do, but
+hey why not.
+
+*** DONE default <insert> metamethod semantics
+CLOSED: [2019-05-30 Thu 18:08]
+- State "DONE"       from "STARTED"    [2019-05-30 Thu 18:08] \\
+  Added tests.
+- State "STARTED"    from "TODO"       [2019-05-30 Thu 17:57]
+- State "TODO"       from "STARTED"    [2019-05-30 Thu 17:41] \\
+  Implemented ~set~. Need to add tests.
+- State "STARTED"    from "TODO"       [2019-05-30 Thu 16:15]
+:LOGBOOK:
+CLOCK: [2019-05-30 Thu 17:57]--[2019-05-30 Thu 18:08] =>  0:11
+CLOCK: [2019-05-30 Thu 16:15]--[2019-05-30 Thu 17:41] =>  1:26
+:END:
+
+Implementing <insert> metamethod I made an interesting observation re the
+semantics of metamethods. Metamethod is only ever looked up on the metatable
+proper not its inheritance chain. Effectively:
+#+begin_src racket
+  ;; Lua equivalent of rawget
+  (dict-ref (table-meta t) :<insert>)
+#+end_src
+that is what Lua does, too, and unless I'm mistaken my first Lua table
+implementation does the wrong thing - it looks for metamethod on the entire
+metachain. I wonder if such semantics would be interesting. Technically, we could
+implement something like it simply by setting <insert> or any other metamethod for
+that matter to a procedure that does the deep metachain lookup for <insert>.
+
+*** DONE consider set semantics: undefined removes the entry
+- State "DONE"       from "STARTED"    [2019-06-03 Mon 16:08] \\
+  This turned out quite pleasant IMO. At least atm it feels better than all of the
+  error juggling and checking for undefined. It also made ~rm~ (remove entry)
+  procedure trivial.
+- State "STARTED"       from "TODO"    [2019-06-03 Mon 15:20]
+:LOGBOOK:
+CLOCK: [2019-06-03 Mon 15:20]--[2019-06-03 Mon 16:10] =>  0:50
+:END:
+
+This may actually proves great. No error would ever be thrown. Semantics are
+simple. Constructor becomes trivial: either silently ignore entries with undefined
+value or creat an (ht) without any check, then iterate and remove any entries with
+undefined on premise that there would typically be very few of them. I really like
+this.
+
+*** DONE set: guard against undefined
+CLOSED: [2019-06-03 Mon 15:19]
+- State "DONE"       from "STARTED"    [2019-06-03 Mon 15:19]
+:LOGBOOK:
+CLOCK: [2019-06-03 Mon 15:03]--[2019-06-03 Mon 15:19] =>  0:16
+:END:
+
+*** DONE consider <set> metamethod semantics
+CLOSED: [2019-06-04 Tue 13:06]
+- State "DONE"       from "STARTED"    [2019-06-04 Tue 13:06] \\
+  Implemented <set> semantics and removed <insert> completely. Also implemented
+  dict-set! to disallow undefined values. This needs some thinking and more tests.
+- State "TODO"       from "STARTED"    [2019-06-04 Tue 10:08]
+:LOGBOOK:
+CLOCK: [2019-06-04 Tue 12:05]--[2019-06-04 Tue 13:06] =>  1:01
+CLOCK: [2019-06-04 Tue 09:39]--[2019-06-04 Tue 10:08] =>  0:29
+:END:
+
+- State "TODO"       from "IDEA"       [2019-06-04 Tue 09:30] \\
+  In light of <spec> implementation that may want to guard values being inserted and
+  set I should try <set>. I expect it to subsume <insert>.
+Big question is whether we need it at all. <set> and <insert> each can be
+implemented in terms of the other, so maybe consider keeping just one.
+
+<set> takes 3 arguments: self (table), key and a new value. Since the
+self argument is the table before the change, we may also guard the relationship
+between the old value and the new. This also hints that <insert> is redundant and
+amounts to (t:<set> k v) where t.k is undefined assuming we manage to completely
+disallow undefined as a table value. Do we want to keep both around or just the
+<set>?
+
+*** DONE default <proc> metamethod semantics
+CLOSED: [2019-06-03 Mon 11:21]
+- State "DONE"       from "TODO"       [2019-06-03 Mon 11:21] \\
+  Leaving current implementation at least till I've used it enough to judge if
+  semantics need to change.
+- State "TODO"       from "STARTED"    [2019-05-31 Fri 16:35] \\
+  Ran into a subtlety: when table is run as a procedure its first argument will
+  always be bound to the table whose prop:procedure is being run! This is Racket's
+  doing not ours. However, if tables are to be used as procedures then passing the
+  table itself to the user's <proc> procedure only makes sense when the procedure is
+  actually supposed to act on the table. In general that's not always the case. It
+  is conceivable that we may want to allow certain tables act as normal procedures.
+  Should we do anything special to tell the two cases apart or do we simply note
+  that <prop> metamethod must always have an extra positional argument that'd be
+  bound to the table itself?
+
+  Another possible solution is to have two metamethods <prop> and <tprop> with the
+  latter taking precedence when both are present. Semantics:
+  - when <prop> table is not passed to the user procedure in keyword-apply,
+  - when <tprop> table is included in the args to keyword-apply.
+
+  Something to think about.
+- State "STARTED"    from "TODO"       [2019-05-31 Fri 15:13]
+- State "TODO"       from "STARTED"    [2019-05-31 Fri 14:16] \\
+  Write tests.
+- State "STARTED"    from "TODO"       [2019-05-31 Fri 13:02]
+:LOGBOOK:
+CLOCK: [2019-05-31 Fri 15:19]--[2019-05-31 Fri 16:35] =>  1:16
+CLOCK: [2019-05-31 Fri 15:13]--[2019-05-31 Fri 15:17] =>  0:04
+CLOCK: [2019-05-31 Fri 13:02]--[2019-05-31 Fri 14:16] =>  1:14
+:END:
+
+Current implementation does not provide a default <proc> nor does it look beyond
+the metatable - that is <proc> is strictly a metamethod and only ever looked up on
+the metatable proper. Providing a default or falling through down the ancestor
+chain IMO are problematic. Tables are almost too flexible to offer any reasonable
+default e.g. what to do with <tables> and multiple inheritance in general. If we
+supply the default someone may attempt to rely on it to always be present for any
+table, but then someone might override that.
+
+Luckily we can always implement <proc> that falls through up the mt chain, that
+would only effect current metatable, which is good. By tweaking table constructors
+e.g. #%table or <setmeta> metamethod we could automate this for any metatables we
+derive, at least I think so atm.
+
+This is something I need to try in action and see what works and what tricks I can
+employ. Anything I come up with now may prove unreasonable in practice.
+
+*** IDEA consider <name> metamethod semantics
+CLOSED: [2019-06-03 Mon 17:00]
+
+Something to consider in context of error reporting. Be nice if tables could id
+themselves so that error messages could be enriched.
+
+*** IDEA default <isa?> metamethod semantics
+CLOSED: [2019-06-07 Fri 09:37]
+
+This is to test for "subtyping" essentially:
+#+begin_src racket
+  (t:<isa?> <foo>)
+#+end_src
+
+Reason we care about that is because metatables like <tables> (multiple
+inheritance) combine multiple metatables, so answering an <isa?> question is no
+longer straightforward. However IMO <isa> should always simply return the
+metatable, maybe?
+
+** Table constructors
+
+*** Thoughts on constructors
+
+CLOS and MOP in general instantiate via a generic that dispatches an the symbolic
+name of a class. I see no compelling reason to do the same with tables.
+
+{Meta entry ...} uses Meta that's bound to some table, which CLOS has to compute
+from the symbolic name. If we need to programmatically instantiate tables from a
+metatable it's as easy as (mt-value:new {init-table}). If we want to create a
+metatable that "inherits" from Meta, it's as simple as (set-metatable! mt Meta).
+Why have that symbolic name in the first place? I don't like having to store a
+global table of all tables somewhere in the sky. We could definitely do it if we
+ever need. Basically, I'd rather just stick with Racket object identity or ~isa~
+identity.
+
+Essentially, the equivalent of CLOS's ~make-instance~ is ~mt:new~ method or
+whatever we end up calling it.
+
+CLOS's ~make-instance~ does no real work other than lookup the class metaobject by
+symbol and delegate to it, the latter again does nothing but call generic
+~initialize-instance~ that does slot assignment. We can do all of that and more in
+~mt:new~ method, no need to protocolize, IMO. Any re-initialization of a table
+amounts to either setting and dropping its slots via standard means, or defining a
+method e.g. ~mt:reinit~ to do it in bulk or whatever. Ditto, for ~change-class~,
+just swap out the metatable. Well, we may want to allow custom work if metatable
+ever changes, hm. Maybe ~set-metatable!~ ought to be a table generic, too? I think
+it could work. Just have the default on the base ~metatable~. Most of the busy
+work that CLOS needs to do here amounts to diffing slot sets on the class before
+and after. We have it easy, since metatables are just tables, with their own
+slots, as soon as we swap an mt for another, its slots are available to the
+instance unless it shadows them with slots of the same name.
+
+*** TODO ~table~ constructor
+SCHEDULED: <2019-06-23 Sun>
+
+for when you don't want to use {} syntax or your need to compute metatable.
+#+begin_src racket
+  (table (compute <mt>)
+         #:trait1 trait1
+         #:trait2 trait2
+         (:a 1)
+         (:b 2))
+#+end_src
+
+*** TODO {proc ...} constructor
+SCHEDULED: <2019-06-23 Sun>
+
+We already allow {<mt> ...} constructor. Say we stick with only id in the app
+position there but also allow it to be a procedure, which we call. So it can be in
+that order:
+1. table - then use it for metatable,
+2. procedure - construct default {...} table and pass it to that procedure.
+
+We don't really achieve much with that, cause we could just as easily call this:
+#+begin_src racket
+  (proc {slots})
+#+end_src
+
+So is there any benefit to this?
+
+**** TODO fix {(void)} constructor
+SCHEDULED: <2019-06-23 Sun>
+  [2019-06-19 Wed]
+
+why does this produce a table?
+#+begin_src racket
+(let ((mt (void))) {mt})
+#+end_src
+
+we should probably catch non-identifiers at first position during expansion.
+
+*** DONE default #%table constructor semantics
+CLOSED: [2019-06-01 Sat 20:04]
+- State "DONE"       from "STARTED"    [2019-06-01 Sat 20:04] \\
+  Added <setmeta> call to default table constructor.
+- State "TODO"       from "STARTED"    [2019-06-01 Sat 16:41] \\
+  Have basic costructor. Need to add call to <setmeta> metamethod. Also need to
+  implement equality, so I can use it in tests.
+- State "TODO"       from "STARTED"    [2019-06-01 Sat 15:57]
+:LOGBOOK:
+CLOCK: [2019-06-01 Sat 19:48]--[2019-06-01 Sat 20:04] =>  0:16
+CLOCK: [2019-06-01 Sat 16:09]--[2019-06-01 Sat 16:41] =>  0:32
+CLOCK: [2019-06-01 Sat 15:45]--[2019-06-01 Sat 15:56] =>  0:11
+:END:
+
+Default #%table semantics then is this:
+1. create a fresh table with any slots passed,
+2. set its metatable to <metatable>
+3. call (t:<setmeta>) metamethod
+
+Anyone can simply redefine #%table to obtain different semantics that wouldn't
+break any other code! So, we haven't lost flexibility yet gained robustness!
+
+*** IDEA Consider delegating undefined guard to ~set~
+CLOSED: [2019-06-03 Mon 16:13]
+
+Constructor body then becomes trivial with ~keys~ and ~values~ spliced in by our
+macro:
+#+begin_src racket
+  (for-each (curry set t) keys values)
+#+end_src
+
+We gain simplicity at the cost of extra indirection, which almost certainly brings
+overhead.
+
+*** DONE Guard against undefined values in constructor
+CLOSED: [2019-06-03 Mon 13:42]
+- State "DONE"       from "STARTED"    [2019-06-03 Mon 13:42] \\
+  Ended up exposing a guard as a parameter ~table-entry-guard~ set to a procedure
+  that takes key and value and returns #t or #f. #f triggers an argument error. User
+  may dynamically supply their own guard or set it to #f, which would be equivalent
+  to unsafe (do not check for undefined).
+:LOGBOOK:
+CLOCK: [2019-06-03 Mon 12:30]--[2019-06-03 Mon 13:42] =>  1:12
+:END:
+
+Two cases to cover:
+- table constructor,
+- ~set~ function must ensure that <set>, <insert>, <setmeta> metamethods don't set
+  values to undefined).
+
+Alternative: make setting to undefined equivalent to removing the key entirely.
+What my Lua implementation currently does.
+
+Alternative: make it a convention and simply say that its UB if you ever attempt
+set a slot to undefined. That doesn't sit well with me. However, we could provide
+a setting that lets you turn the check off in constructors but say not in ~set~
+once you go into production and made sure no undefine can ever occur in the
+constructor. Still pretty dangerous but maybe a reasonable trade-off a-la
+unchecked integer ops etc.
+
+*** DONE Useful #:kw option semantics?
+CLOSED: [2019-06-07 Fri 08:39]
+
+- State "DONE"       from "TODO"       [2019-06-07 Fri 08:39] \\
+  cut external traits for now - I don't like the idea of a global table where
+  everyone could step on each outher's toes. It is also effectively subsumed by
+  allowing adhoc keywords with functions for traits. I am concerned with table
+  semantics - maybe too complex and indirect.
+
+Like I observed these appear to largely reproduce the <setmeta> behavior, then
+question becomes whether we even need them and what semantics would make them
+useful?
+
+Here's one idea. Instead of having external table with handlers allow any keywords
+at all with only two type of options possible:
+1. #:kw table - means invoke table.<setmeta> as the final constructor step,
+2. #:kw function - means invoke function as the final constructors step.
+
+However 1. has a problem: atm <setmeta> only takes table instance being
+constructed as the only argument, but we almost certainly want to pass the
+table-option as an extra argument - that is we potentially want <setmeta> to be
+able to refer to self (aka option, aka table where <setmeta> appears). Technically
+this is very possible because when that option table itself gets created its
+metatable <setmeta> is run and it has access to table option instance obviously,
+then it could install <setmeta> that closes over the instance on the instance.
+Here's a <spec> example, but it is bananas convoluted - noone will ever be able to
+just read and understand wtf is happening:
+
+#+begin_src racket
+  (define <spec>
+    {(:<proc> (case-lambda))
+     (:<setmeta> (λ (spec-inst)
+                   (set spec-inst :<setmeta>
+                        (λ (mt)
+                          ;; remove :<setmeta> slot from :check table - ugly
+                          (rm spec-inst :<setmeta>)
+                          (set mt :check spec-inst)
+                          (set mt :<setmeta> (λ (t) (t:check)))
+                          (set mt :<set> (λ (t k v) (t:check k v) (dict-set! t k v) t))))))})
+
+  ;; now this
+  (define <m> {#:check {<spec> (:a (or/c undefined? natural?))
+                               (:b (or/c undefined? symbol?))
+                               (:c symbol?)}})
+  ;; =>
+  (define <m>
+    {#:check {#;<spec>
+              (:<setmeta> (λ (mt)
+                            ;; remove :<setmeta> slot from :check table - ugly
+                            (rm spec-inst :<setmeta>)
+                            (set mt :check spec-inst)
+                            (set mt :<setmeta> (λ (t) (t:check)))
+                            (set mt :<set> (λ (t k v) (t:check k v) (dict-set! t k v) t))))}})
+
+  ;; then this would run checks as expected
+  (define t {<m> (:a 1) (:c 'c)})
+#+end_src
+
+**** idea 1
+
+#:kw traits are tried in this order:
+1. +externally defined with ~define-keyword-trait~:+
+   - get the handler from ~#%table-keyword-traits~ table,
+   - it must be a higher order function that takes the keyword option and returns
+     a function that takes table instance and returns a table,
+   - #%table effectively does ((handler option) t);
+2. function: t -> t, #%table simply calls it (option t)
+3. table:
+   - if has :<setmeta> #:table will call it (setmeta t),
+   - else do nothing.
+
+*** DONE Allow #:kw args in {} constructors
+CLOSED: [2019-06-06 Thu 13:59]
+- State "DONE"       from "TODO"       [2019-06-06 Thu 13:59] \\
+  Have a sketch that works, important task is to figure reasonable and simple
+  semantics. Definitely work to do.
+- State "TODO"       from "STARTED"    [2019-06-05 Wed 17:40]
+- State "TODO"       from "STARTED"    [2019-06-02 Sun 11:54] \\
+  It's actually not obvious how to allow #:kw args under the assumption that users
+  may want to extend the set of such args with their own keywords. First we need to
+  parse them. Assuming we use [[file:~/Code/racket/racket/doc/syntax/syntax-helpers.html?q=parse-keyword-options#%2528def._%2528%2528lib._syntax%252Fkeyword..rkt%2529._parse-keyword-options%2529%2529][parse-keyword-options]] then to parse user options we
+  must both expose keyword-table, so the user may extend it then use that extended
+  table to parse. But that's just parsing - obtaining options with the rest being
+  table entries. Options presumably carry some semantics with them which probably
+  ought to transform the constructor result in some way? This too must be user
+  supplied if we allow extensions. So you see, not obvious at all. One possible
+  solution is for each keyword to represent a table-instance handler
+  (imddleware-style) where the final table instance is simply the result of nesting
+  all handlers (->> t h1 h2 h3 ...) => final table. But that means that user
+  supplied keyword args may only effect table at runtime.
+- State "TODO"       from "STARTED"    [2019-06-01 Sat 20:38] \\
+  Moved actual parsing into #%table.
+:LOGBOOK:
+CLOCK: [2019-06-05 Wed 14:00]--[2019-06-05 Wed 17:40] =>  3:40
+CLOCK: [2019-06-02 Sun 11:32]--[2019-06-02 Sun 11:54] =>  0:22
+CLOCK: [2019-06-01 Sat 20:16]--[2019-06-01 Sat 20:38] =>  0:22
+:END:
+
+To simplify life I think we should treat {} syntax exclusively for table
+construction. Since the most typical user extension should only ever deal with
+#%table, {} can safely pass through any and all arguments without any extra
+checks, that includes any #:kw args. All checks will have to be done in #%table
+and reported with correct context.
+
+*** DONE Expand {<metatable>} syntax into #%table
+CLOSED: [2019-06-01 Sat 20:15]
+- State "DONE"       from "TODO"       [2019-06-01 Sat 20:15] \\
+  Moved #:kw args into separate TODO item.
+- State "TODO"       from "STARTED"    [2019-06-01 Sat 15:44] \\
+  We currently expand into #%table, but assume no #:kw args, so checking only table
+  entries. Next we should also cover relevant #:kw args.
+:LOGBOOK:
+CLOCK: [2019-06-01 Sat 15:13]--[2019-06-01 Sat 15:44] =>  0:31
+:END:
+
+Expand into ~#%table~, which we expose and let the user override.
+
+#+begin_src racket
+(define t {<metatable> #:kw1 opt1 #:kw2 opt2 (key val) ...})
+;; =>
+(#%table ...)
+#+end_src
+
+*** DONE #:check syntax for <spec>
+CLOSED: [2019-06-06 Thu 13:59]
+
+- State "DONE"       from "TODO"       [2019-06-06 Thu 13:59]
+*** DONE <spec> metatable
+CLOSED: [2019-06-05 Wed 10:07]
+- State "DONE"       from "STARTED"    [2019-06-05 Wed 10:07] \\
+  Seems to work, but uncovered some issues with #%. and t:check is somehow broken,
+  so need to debug. Error reporting is basic atm and may need some heavy leaning on
+  contract facilities.
+- State "TODO"       from "STARTED"    [2019-06-04 Tue 18:06] \\
+  Made progress but looks like #%. is buggy - or? fails me again.
+- State "TODO"       from "STARTED"    [2019-06-02 Sun 10:52] \\
+  Sketched how spec might work
+:LOGBOOK:
+CLOCK: [2019-06-05 Wed 09:50]--[2019-06-05 Wed 10:07] =>  0:17
+CLOCK: [2019-06-04 Tue 16:23]--[2019-06-04 Tue 18:36] =>  2:13
+CLOCK: [2019-06-02 Sun 08:35]--[2019-06-02 Sun 10:52] =>  2:17
+:END:
+**** Thoughts on <spec>
+
+With spec we achieve two things:
+1. communicate what instance slots we expect,
+2. guard (or contract) slots when instance is constructed,
+3. potentially guard slots when they are inserted, updated, removed.
+
+Even if only for "in-code" documentation. Note we are specing slots for the
+instance not the metatable. If we wanted them to be present on the metatable we'd
+probably just set them right there and then.
+
+#+begin_src racket
+  (define <spec>
+    {(:<proc> (case-lambda
+                ((spec t) (define checked (for/and (((slot pred?) (in-dict spec)))
+                                            (pred? (dict-ref t slot))))
+                          (if checked t (error "Slot spec violated")))
+                ((spec t k v) (define pred? (or? (dict-ref spec slot) identity))
+                              ;; we may simply want the undefined? check as a
+                              ;; final step in the set function itself
+                              (when (undefined? v)
+                                (error "undefined is not allowed as a table value"))
+                              (when? pred?
+                                     (or? (pred? v) (error "Sloc spec violated")))
+                              t)))})
+
+  ;; now user may define their own metatable: making :foo required, but :bar
+  ;; optional - must be natural if defined. Any slots not in the spec assumed to be
+  ;; of any type e.g. (:slot any/c).
+  (define <mt> {<deeper-mt> (:check {<spec> (:foo string?)
+                                            (:bar (or undefined? natural?))})
+                            ;; user's responsibility to call check
+                            (:<setmeta> (λ (t) (t:check)))
+                            (:<set> (λ (t k v) (t:check k v)))})
+
+  ;; We could also provide a shortcut, so that user doesn't have to supply
+  ;; <setmeta> and <set> metamethods.
+  (define <mt> {<deeper-mt> #:check {<spec> (:foo string?)
+                                            (:bar (or undefined? natural?))}})
+
+  ;; Finally we create an instance whose slots would be checked
+  (define t {<mt> (:foo "foo") (:bar 42)})
+#+end_src
+
+Proposed implementation of <spec> and #:check actually allow several cool things:
+- user may supply their own table instead of <spec>, all it needs to do is define
+  <proc> of arity 1 and 3;
+- having specified #:check user may either remove :<setmeta> and (or) :<set> to
+  avoid overhead or set them to e.g. (const #t).
+
+Could we leverage Racket contract system here?
+
+**** DONE required / optional combinators for <spec> predicates
+CLOSED: [2019-06-07 Fri 11:07]
+- State "DONE"       from "STARTED"    [2019-06-07 Fri 11:07]
+:LOGBOOK:
+CLOCK: [2019-06-07 Fri 10:11]--[2019-06-07 Fri 11:07] =>  0:56
+:END:
+
+By default we assume every slot is possible, but not required, an alternative
+could be defined by disjunction of undefined (signaling allowed absense) with
+predicate (that must be satisfied when slot is present). Contract or predicate by
+itself then signals a required slot. This is certainly more verbose, though.
+
+Possible implementation:
+#+begin_src racket
+  (define (required . contract) (apply and/c (compose not undefined?) contract))
+  (define ! required)
+
+  (define (optional . contract) (apply or/c undefined? contract))
+  (define ? optional)
+
+  ;; now we should be able to use these in <spec>
+
+  (required (or/c string? number?))
+  ;; or
+  (! (or/c string? number?))
+  ;; =>
+  (and/c (compose not undefined?) (or/c string? number?))
+
+  (optional (or/c string? number?))
+  ;; or
+  (? (or/c string? number?))
+  ;; =>
+  (or/c undefined? (or/c string? number?))
+
+  ;; example
+  (define <mt> {<foo> #:check {<spec> (:optional (? (or/c string? symbol?)))
+                                      (:required (! number?))}})
+#+end_src
+
+**** DONE required / optional combinator syntax
+CLOSED: [2019-06-07 Fri 11:07]
+
+- State "DONE"       from "TODO"       [2019-06-07 Fri 11:07]
+We could make them more pleasant to use by also having ~optional~ and ~required~
+as id-transformers so they may appear on their own (ditto ? and !):
+
+#+begin_src racket
+  {<spec> (:optional ?)
+          (:required !)}
+  ;; =>
+  {<spec> (:optional any/c)
+          (:required (compose not undefined?))}
+#+end_src
+
+*** DONE <only> metatable derived from <spec> to seal instances
+CLOSED: [2019-06-05 Wed 10:09]
+
+- State "DONE"       from "TODO"       [2019-06-05 Wed 10:09]
+Note that by default tables are "open", so any slot not explicitly ~required~ by
+the predicate in <spec> may still be added to the table, that is any slot not in
+<spec> is implicitly ~any/c~. We could trivially close or seal the table to only
+"speced" slots by deriving a new metatable from <spec> e.g. <only> with <proc>
+metamethod doing necessary checks!
+
+** . : .. :: syntax
+
+*** TODO consider ditching . syntax in tables
+SCHEDULED: <2019-06-23 Sun>
+
+beginning to think that :: syntax isn't terribly useful. If we ditch current ::
+semantics then we may have more consistent syntax without . and .. that is:
+- : behaves like . would behave in current implementation,
+- :: behaves like : would behave in current implementation.
+
+so then:
+#+begin_src racket
+  (define <t> {})
+  (define (<t>:foo) (is just a function))
+  (define (<t>::bar) (is a method with implicit self))
+  ;; calls function on t
+  (:foo t)
+  (t:foo)
+  ;; calls method on t, with self = t
+  (::foo t)
+  (t::foo)
+  ;; bonus: key lookup is consistent
+  t:foo
+  t:bar
+  ;; while we still can get a proc if we wanted
+  t::bar
+#+end_src
+
+*** TODO : and :: for method application
+SCHEDULED: <2019-06-23 Sun>
+
+but beware of current :tags implementation, appears it rewrites standalone : into
+':: - I'll probably want to fix that at least in the app position. Question to ask
+yourself - do we allow standalone : and :: that is in expression position -
+something we can pass around?
+
+#+begin_src racket
+  ;; having this
+  (apply: t k a b rest)
+  (apply:: t k a b rest)
+
+  (:meth t a b c)
+  (::meth t a b c)
+  ;; desugar =>
+  (let ((t t)) (t:meth a b c))
+  (let ((t t)) (t::meth a b c))
+
+  ;; TODO but would that work in ~> ?
+  (: t k a b c)
+  (:: t k a b c)
+  ;; desugar =>
+  (let ((t t) (k k)) (t:k a b c))
+  (let ((t t) (k k)) (t::k a b c))
+#+end_src
+
+and for completeness impl the same for .. and ::
+
+*** IDEA t.k? t:k?
+CLOSED: [2019-06-11 Tue 13:06]
+
+Shorthand syntax that potentially returns undefined or #f (to better interface
+with Racket). Possible checks:
+- unless (table? t) return undefined
+- unless (procedure? t:k) return (const undefined).
+
+Basically the idea is to where it makes sense to get back the nil behavior of
+sorts. Maybe even have: get?
+- check that (table? t) else return undefined.
+
+*** IDEA t.k! t:k!
+CLOSED: [2019-06-11 Tue 13:48]
+
+This one is probably too crazy, but maybe a fun macro exercise. Let these
+automatically bind the looked up value to t.k and t:k respectively, so that the
+next lookup simply retrieves the value without going through get. Challenge here
+is to identify the nearest binding introducing scope. I think this should be
+possible in Racket even if nuts.
+
+*** DONE Implement define/table
+CLOSED: [2019-06-08 Sat 17:01]
+
+- State "DONE"       from "TODO"       [2019-06-08 Sat 17:01]
+Turns out Racket already ships [[file:~/Code/racket/racket/doc/syntax/transformer-helpers.html?q=normalize-definition#%2528part._define%2529][transformer helpers to parse define-like forms]]. Not
+much left for me to do.
+
+**** DONE allow id-style (define t.k val)
+CLOSED: [2019-06-08 Sat 17:01]
+
+- State "DONE"       from "TODO"       [2019-06-08 Sat 17:01]
+**** DONE allow function-nesting (define ((foo.bar a) b) body)
+CLOSED: [2019-06-08 Sat 17:00]
+
+- State "DONE"       from "TODO"       [2019-06-08 Sat 17:00] \\
+  TIL [[file:~/Code/racket/racket/doc/syntax/transformer-helpers.html?q=normalize-definition#%2528def._%2528%2528lib._syntax%252Fdefine..rkt%2529._normalize-definition%2529%2529][normalize-definition]] in Racket that does the heavy-lifting.
+**** DONE make define/tables drop-in replacement for Racket's define
+CLOSED: [2019-06-08 Sat 16:59]
+
+- State "DONE"       from "TODO"       [2019-06-08 Sat 16:59] \\
+  For #lang racket/tables I just need to provide with rename-out.
+*** DONE Implement t..k and t::k
+CLOSED: [2019-06-07 Fri 13:25]
+- State "DONE"       from "STARTED"    [2019-06-07 Fri 13:25] \\
+  A bit repetitive but works.
+- State "TODO"       from "STARTED"    [2019-06-07 Fri 12:11] \\
+  Need tests now.
+:LOGBOOK:
+CLOCK: [2019-06-07 Fri 12:57]--[2019-06-07 Fri 13:25] =>  0:28
+CLOCK: [2019-06-07 Fri 11:17]--[2019-06-07 Fri 12:11] =>  0:54
+:END:
+
+*** DONE Implement default #%. accessor semantics
+CLOSED: [2019-06-03 Mon 10:34]
+
+- State "DONE"       from "TODO"       [2019-06-03 Mon 10:34]
+Expose dot and colon identifier notation, so users may override it in their
+lang/tables.
+#+begin_src racket
+  ;; current API
+  (#%.id "sep" id)
+  ;; e.g.
+  (#%.id ":" t:f)
+#+end_src
+
+*** DONE Expand t.key t:key t..key t::key syntax into #%.
+CLOSED: [2019-06-03 Mon 10:32]
+- State "DONE"       from "STARTED"    [2019-06-03 Mon 10:32] \\
+  There is repetitive work in current implementation with both #%top and #%.
+  expansions relying on ~table-sep-key?~. Somehow I fail to see a cleaner
+  implementation atm.
+- State "TODO"       from "STARTED"    [2019-06-02 Sun 21:33]
+- State "TODO"       from "STARTED"    [2019-06-02 Sun 17:23]
+- State "TODO"       from "STARTED"    [2019-06-02 Sun 16:46]
+:LOGBOOK:
+CLOCK: [2019-06-03 Mon 09:11]--[2019-06-03 Mon 10:32] =>  1:21
+CLOCK: [2019-06-02 Sun 21:07]--[2019-06-02 Sun 21:33] =>  0:26
+CLOCK: [2019-06-02 Sun 17:06]--[2019-06-02 Sun 17:23] =>  0:17
+CLOCK: [2019-06-02 Sun 15:06]--[2019-06-02 Sun 16:46] =>  1:40
+:END:
+
+** DONE Make tables "Racket first-class"
+CLOSED: [2019-06-10 Mon 11:38]
+
+- State "DONE"       from "TODO"       [2019-06-10 Mon 11:38] \\
+  For now we rely of Racket struct-info to reflect table constructor procedure.
+*** TODO Implement match expander for tables
+SCHEDULED: <2019-06-23 Sun>
+
+basically extend, move and rename my ht, ht* expanders from prelude to tables.rkt.
+
+Obvious names are: t and t* (permissive pattern). These should still be
+polymorphic and cover any gen:dict implementing data.
+
+Is it possible to allow {a b c} and {(:key a)} patterns i.e. somehow recognize
+curly brace as a table pattern?
+
+Should the default lookup sematics for t and t* be shallow i.e. no metatable
+lookup? Perhaps it should be full mt lookup and if we ever need shallow have a
+separate ~dict~ pattern? Suprisingly I don't think there is such a pattern:
+- t and t* for tables,
+- dict and dict* for shallow lookup.
+
+Both should probably work for any gen:dict type.
+
+*** Thoughts about extending Racket struct underlying tables
+
+Being "first class" isn't enough, tables must embrace the Racket ecosystem. That
+is we should allow "deriving" new table struct types.
+
+Put differently user must be able to define a new table struct that otherwise like
+tables but might implement some extensions allowed by Racket struct interface.
+
+Motivation: Racket struct offers some truly powerful machinery that permeates
+Racket ecosystem, so it only makes sense that we should let <table> users to make
+good use of it, too. That is to say that prototypes as extension fascilities are
+powerful but aren't enough, since they are mostly oblivious to what Racket
+provides. Here's a motivating example: there is no way atm to treat tables as
+synchronizable events. To get that we'd have to add ~prop:evt~ to the table
+struct, but then it would make every table into an event, which maybe too much.
+Even assuming we are ok with every table doubling as an event, we'd have to
+program a way to customize what tables return on sync since this isn't "one size
+fits all" - users may want different things of them. Sadly, this opens a pandora
+box. Not only would we be reinventing stuff Racket structs already do well, but
+we'd also have to write documentation for that.
+
+My preferred solution would be, in addition to prototype or whatever other type of
+extension mechanism we have for table, to also allow extending them at struct
+level, that is we don't necessarily hide the fact that tables are structs. This
+has an obvious problem: struct inheritance doesn't buy us anything - struct
+extension isn't otherwise like its parent struct - that is the user would have to
+turn it back into a table by extending it some kind table protocol or other.
+
+We must make such extensions natural and boilerplate free. Every struct such
+extended must remain a table. Beats me how to do that.
+
+One way we might be able to do that is to assume that being a table amounts to
+implementing e.g. ~gen:dict~ and ~gen:table~ generic interfaces. Then we provide a
+e.g. ~table~ macro that is like ~struct~ macro i.e. expands into a subtype of
+table, that is table is the base type of this new table type, and that subtype
+implements relevant ~#:methods~. Those methods would have to delegate to the
+methods of the base type, that is of the original table. Constructors like
+~{<some-table>}~ would have to cooperate in that they must expand into a relevant
+generic method call.
+
+If we are going with a macro expanding into ~struct~ or ~define-struct~ it would
+pay to expand into ~define-struct/derived~ so that errors are reported in terms of
+the name user supplies rather than whatever struct syntax we expand into.
+
+*** DONE Add prop:evt to table struct
+CLOSED: [2019-06-10 Mon 11:16]
+- State "DONE"       from "STARTED"    [2019-06-10 Mon 11:16] \\
+  We achieve this by relying on Racket reflection with [[file:~/Code/racket/racket/doc/reference/inspectors.html#%2528def._%2528%2528quote._~23~25kernel%2529._struct-info%2529%2529][struct-info]] to obtain the
+  most specific struct type of the metatable passed to the constructor and
+  [[file:~/Code/racket/racket/doc/reference/inspectors.html#%2528def._%2528%2528quote._~23~25kernel%2529._struct-type-make-constructor%2529%2529][struct-type-make-constructor]] to actually construct an instance of the extended
+  table struct type. This is cute and even preserves the struct type as you start to
+  derive new metatables. It does requere however that the new table struct is
+  #:transparent and doesn't add any new fields.
+:LOGBOOK:
+CLOCK: [2019-06-10 Mon 09:33]--[2019-06-10 Mon 11:16] =>  1:43
+:END:
+
+*** IDEA table-struct macro to extend table struct
+
+This is only required assuming current #:table implementation that uses struct
+reflection to obtain the constructor procedure. For it to work correctly table
+struct must be #:transparent and not add any extra fields, hence the need to limit
+user options somewhat.
+
+Would essentially act as a Racket struct macro that inherits  from table struct.
+About the only thing it needs to do is passthrough any props, generic interfaces
+and struct fields supplied.
+
+#+begin_src racket
+  (table-struct table-evt
+                #:property prop:evt (λ (t) (get t :evt))
+                #:methods gen:foo
+                ((define (foo t) body)))
+  ;; expand
+  ;; =>
+  (struct table-evt table ()
+    #:mutable
+    #:transparent
+    #:property prop:evt (λ (t) (get t :evt))
+    #:methods gen:foo
+    ((define (foo t) body)))
+#+end_src
+
+*** IDEA carry table struct constructor on a slot
+
+Possibly alternative solution for extending table structs that doesn't rely on
+reflection and would let the user add fields.
+
+We still require that extend table-struct inherits from table. But user may add
+fields and make it not #:transparent or whatever. However, that means they need to
+somehow supply the constructor procedure as well as any additional arguments. One
+obvious way to do that is to pass the procedure as a metatable slot.
+
+I dunno how I feel about this, we maybe giving the user too much space here with
+little benefit.
+
+*** DONE Ask the mailing list
+CLOSED: [2019-05-22 Wed 16:42]
+
+- State "DONE"       from "TODO"       [2019-05-22 Wed 16:42] \\
+  https://groups.google.com/forum/#!topic/racket-users/GZAtJzK47T4
+
+This would probably sound like rambling but that's only because I am struggling a
+little bit. I implemented a little language that offers its own compound data
+type: first class and users can extend it in various ways. Naturally, it is
+implemented as a Racket ~struct~. As I started using the language, it occured to
+me that I lost something and I'd very much like to get it back.
+
+Racket struct offers some truly powerful machinery that permeates Racket
+ecosystem. Here's a motivating example: having a new fancy first class compound
+(tm) datatype is nice and well, but what if I want it to double as a
+synchronizable event? Oops. I do facilitate extensions, but that's something that
+would need ~prop:evt~ on the underlying struct. I could "extend" my language and
+add this prop myself, but it isn't a given that every instance needs to be an
+event, not to mention there isn't "one size fits all" here, and the user may want
+to customize the result of synchronization, if they even want events at all. More
+generally though, how about other properties that may not even exist yet? Of
+course I could surgically extend my implementation and allow to customize those
+extensions etc. But that kind of opens pandora's box, not to mention most of the
+time it'll simply be a "passthrough" of what Racket structs can already do, and
+all of this nonsense would have to be documented - again why bother given the
+marvel that is Racket documentation?
+
+Conventional wisdom holds that you don't expose implementation details, but
+honestly I'm ok dispensing with the dogma in this case. It isn't obvious to me how
+to do that, though. Suppose, you derive a new stuct somehow: say, it implements
+~prop:evt~ but must otherwise be like your datatype. What does that mean? Struct
+inheritance isn't that - I know that much. It must be a protocol of some kind - a
+set of functions and what not (behaviors, really) that make your fancy datatype
+what it is. One possible solution is Racket generics that is assuming we can
+capture the essence of our type as a set of methods. Suppose for a moment, that we
+could. While the underlying implementation may have changed and become either
+richer or more constrained, it should still act as our fancy datatype. Since
+Racket generics don't delegate to base types, are we to demand that the user
+extends the interface to the struct that is nothing but a wrapper around another
+struct that already implements said interface? That's asking too much IMO.
+
+Is the answer to offer a macro that expands into something like
+
+  (struct extended-type fancy-type () #:methods gen:fancy-iface ...)
+
+where I suspect fancy-iface methods don't need to change at all between macro
+invocations?
+
+This can't be a new problem. Any thoughts or advice?
+
+**** my reply to Greg
+
+#+begin_quote
+p.s. While you "have the hood open", you might also want to do something
+similar for `prop:procedure`?
+#+end_quote
+
+I would agree that it is A solution to this particular problem with this
+particular prop. The "passthrough" of some form or other works well and is always
+open to me as the language maintainer but it amounts to special-casing things and
+making me the sole arbiter of what makes it into the language and what doesn't.
+Notice however that nothing about our fancy datatype changes, its interface
+remains the same, yet user gets a richer type. Which means there ought to be a way
+to generalize this. To use your analogy I'd like to find out if there's a way to
+"leave the hood open" in a clean way or at least let the user do the "passthrough"
+trick without the need to dismantle the entire car.
+
+** DONE <tables> for multiple inheritance
+CLOSED: [2019-06-10 Mon 23:08]
+
+- State "DONE"       from "TODO"       [2019-06-10 Mon 23:08] \\
+  Concessions made: metatables are sorted by their corresponding keys in the
+  <tables> instance with ~symbol<?~. Perhaps a better solution would be to sort in
+  table insertion order, but (ht) doesn't support that, would need a different
+  data-structure. Current implementation is ok, too. Alternatively, I could just
+  accept metatables in a list i.e. preordered, but keys in a table look cleaner.
+*** DONE constructor: <setmeta> metamethod semantics
+CLOSED: [2019-06-10 Mon 23:07]
+
+- State "DONE"       from "TODO"       [2019-06-10 Mon 23:07] \\
+  To my surprise didn't need <setmeta> at all.
+Here's how a basic lookup in presence of multiple inheritance may look like. Note
+this does not answer how method invocation with method combination might work.
+
+#+begin_src racket
+  (define <mts> {<tables> (:parent1 <t1>)
+                          (:parent2 <t2>)})
+  ;; constructor does 3 things:
+  ;;
+  ;; 1. creates fresh table with any slots passed,
+  ;; 2. sets meta of <mts> to <tables>
+  ;; 3. calls (<mts>:setmeta) metamethod
+  ;;
+  ;; Now, if we can define setmeta on <tables> that would perform any
+  ;; post-instantiation work e.g. adding :get slot as per below to allow multimeta
+  ;; lookups.
+
+  ;; At least two possible solutions here:
+
+  ;; v1: <setmeta>
+  (define/table (<tables>:<setmeta>)
+    (if (eq? (meta self) <tables>)
+        ;; do nothing to avoid this method when {<mts>} is called
+        self
+        ;; else add :get
+        (set self :<get> <tables>.<get>)))
+
+  ;; v2: <setmeta> simply replace :<setmeta> in <mts> with noop
+  (define/table (<tables>:<setmeta>)
+    (set self :get <tables>.<get>)
+    (set self :setmeta identity))
+
+  ;; :<get> is fully dynamic, that is it makes no assumption about parents and
+  ;; instead looks them up every time its called.
+  (define/table (<tables>:<get> key)
+    (for/first ((parent (in-dict-values self))
+                #:when (not (undefined? (get parent key))))
+      (get parent key)))
+
+  ;; Assuming v1 <setmeta> constructing <mts> amounts to this
+  (define <mts> {<tables> (:parent1 <t1>)
+                          (:parent2 <t2>)})
+  ;; pseudocode =>
+  {(:parent1 <t1>)
+   (:parent2 <t2>)
+   (:<get> <tables>.<get>)
+   #:meta <tables>}
+
+  ;; What's cool here is that user can trivially replace :<get> with their own
+  ;; lookup. Add and remove parent tables - shrinking or growing inheritance chain
+  ;; dynamically.
+
+  ;; Finally when we instantiate <mts> we get
+  (define mts {<mts> (:bar 1)})
+  ;; pseudocode =>
+  {(:bar 1)
+   #:meta {(:parent1 <t1>)
+           (:parent2 <t2>)
+           (:<get> <tables>.<get>)
+           #:meta <tables>}}
+#+end_src
+
+*** DONE accessor: <get> metamethod semantics
+CLOSED: [2019-06-10 Mon 23:05]
+
+- State "DONE"       from "TODO"       [2019-06-10 Mon 23:05] \\
+  Simple but tricky: need to allow lookup on table-meta of self (<tables>) cause
+  otherwise e.g. isa? is unable to reach :<isa?> metamethod.
+#+begin_src racket
+  ;; :<get> is fully dynamic, that is it makes no assumption about parents and
+  ;; instead looks them up every time its called.
+  (define/table (<tables>:<get> key)
+    (for/first ((parent (in-dict-values self))
+                #:when (not (undefined? (get parent key))))
+      (get parent key)))
+#+end_src
+
+*** DONE identity: <isa?> metamethod semantics
+CLOSED: [2019-06-10 Mon 23:03]
+
+- State "DONE"       from "TODO"       [2019-06-10 Mon 23:03]
+Now questions of identity and subtyping. Need to review this part. Leaning towards
+having :<isa> and :<isa?> as metamethods.
+
+#+begin_src racket
+  ;; 1. -------------------------------------------------------------------
+  ;; where isa-pred? could be one where we assume outside generic functions
+  (defmethod (isa? (t table) mt)
+    (apply-metamethod t :isa? mt))
+  (define/table (MultiProto:isa? mt)
+    ;; roughly
+    (for/or ((ancestor (in-ancestors MultiProto)))
+      ;; this actually requires that eq? behaves like Racket eq?, hm
+      (eq? ancestor mt)))
+
+  ;; 2. -------------------------------------------------------------------
+  ;; or one where we only stick with generic table methods, and assume no outside
+  ;; generic functions like isa? in the example above. In this instance we have to
+  ;; resolve ambiguity when calling t:isa? and MultiProto:isa? so that each looks in
+  ;; its prototype chain, rather than on itself.
+  (define/table (MultiProto:isa? mt)
+    ;; notice static MultiProto check as opposed to self
+    (if (eq? MultiProto self)
+        ;; we need this check in absense
+        (apply-metamethod self :isa? (list mt))
+        (for/or ((ancestor (in-ancestors MultiProto)))
+          (eq? ancestor mt))))
+
+  ;; 3. -------------------------------------------------------------------
+  ;; Actually, we can avoid static MultiProto there and adding :isa? to MultiProto
+  ;; altogether instead inheriting it from multi-metatable with a simple trick. Make
+  ;; sure when you instantiate multi-metatable you also store self as :self slot on
+  ;; the instance.
+  (define/table (multi-metatable:isa? mt)
+    (if (eq? self self.self)
+        (apply-metamethod self :isa? mt)
+        (for/or ((ancestor (in-ancestors self)))
+          (eq? ancestor mt))))
+
+  {multi-metatable
+   (:mta {some-meta-table})
+   (:mtab {some-other-meta-table})}
+  ;; =>
+  (multi-metatable:new {(:mta {some-meta-table})
+                        (:mtab {some-other-meta-table})})
+  ;; =>
+  (define new-mt ((get metatable.new) multi-metatable {(:mta {some-meta-table})
+                                                       (:mtab {some-other-meta-table})}))
+  (define/table new-mt:self new-mt)
+
+#+end_src
+
+*** Thoughts on method combinations (:before, :after, call-next-method)
+
+Things like :before :after next-method? and call-next-method are not part of
+multiple-inheritance lookup mechanism although it may appear so. They are part of
+dispatch mechanism, for which multiple inheritance defines an isa? hierarchy. Need
+for combinations arise from ambiguity when multiple methods match during dispatch
+and you need to pick e.g. most specific one etc.
+
+I mean we could conceivably have a :<getmethod> metamethod mechanism that would
+fire on e.g. dot syntax ~t:meth~. It would let you combine methods, but its
+semantics are not clear and would probably be so convoluted as to be utterly
+hopeless.
+
+So for now at least lets keep multiple inheritance lookup separate from dispatch
+and method combinations. Multiple inheritance gives us very clear and precise
+semantics for simple method lookup and precedence.
+
+** IDEA mixins and traits
+CLOSED: [2019-06-10 Mon 13:40]
+
+*** TODO semantics of using table as a #:kw trait?
+SCHEDULED: <2019-06-23 Sun>
+
+presently #:kw trait can be either a table or a procedure. When a table its
+<setmeta> metamethod is called as the last ~add-traits~ step inside the
+constructor. However, in case of table trait we may want to have access to that
+trait table. Atm this requires the "indirection" trick I employed for <spec>. I
+don't like it and more I ran into similar issue in fcgi <outgoing> trait.
+
+Two possibilites:
+1. we ask too much of <setmeta> - should we introduce another <trait> metamethod?
+2. allow setmeta to take either 1 or 2 args and have ~add-traits~ call <setmeta>
+   passing the trait table as the second argument.
+
+Unless you intend to use table as a trait you probably don't care about the 2nd
+argument and if you need <setmeta> you could define it with just one arg. When you
+want both however you could use ~case-lambda~. To be cautios if you only ever
+intend to use a metatable as trait but worry about it ever used as instance:
+#+begin_src racket
+  (case-lambda
+    ;; when used as constructor
+    ((self) self)
+    ;; when used as trait
+    ((self trait) (mix in self with trait)))
+#+end_src
+
+*** thoughts on mixins and traits
+
+As I've observed while adding #:kw options to {} table constructors their
+(probably) most likely use is to basically mix in some behaviours that augment or
+enrich whatever metatable provides. What #:kw options do is essentially wrapping
+the table instance in handler functions to produce an augmented table - think
+middleware pattern of sorts. But that is essentially whan <setmeta> metamethod is
+for so we end up duplicating functionality we already have. And it happens as a
+final step in #%table constructor exactly like <setmeta>.
+
+This hints at possibility of having the #:kw option behavior a-la <spec> with
+tables only - no keyword args necessary. I believe what I'm after are called
+mixins and traits.
+
+E.g. [[file:~/Code/racket/racket/doc/guide/classes.html?q=mixin#%2528part._.Mixins%2529][Racket mixins]] and [[file:~/Code/racket/racket/doc/guide/classes.html?q=mixin#%2528part._.Traits%2529][Racket traits]]. Of course in table setting these will
+probably have their own semantics. What should that be?
+
+Of course we can already manipulate tables in whatever way we like, that is any
+mixin or traits semantics maybe reproduced by mixing tables and function calls
+that manipulate said tables. Question here is whether there are particularly
+interesting semantics for which we may want to provide a systematic and readable
+encoding.
+
+For example even with simple functions our <spec> idea is trivial to implement and
+use:
+#+begin_src racket
+  (define (speced spec (mt <table>))
+    (unless (isa? spec <spec>) (error "<spec> required"))
+    {mt (:check spec)
+        (:<setmeta> (λ (t) (t:check)))
+        (:<set> (λ (t k v) (t:check k v) (dict-set! t k v) t))})
+
+  (define <mt> (speced {<spec> (:a (or/c undefined? natural?))
+                               (:b (or/c undefined? symbol?))
+                               (:c symbol?)}
+                       <table>))
+#+end_src
+
+Another question is whether <mixin> and <trait> metatables might be meaningful?
+
+** TODO Immutable tables
+
+First, we'd have to use immutable hash-table as dictionary. Assuming we've done
+that, there are at least two ways to go about it.
+
+Try to provide immutability completely within tables protocol as e.g. <itable>.
+Here's what may suffice:
+- define <set> metamethod that's immutable,
+- define <itable>'s <setmeta> metamethod so that it adds our new <set> metamethod
+  to every instance's metatable as well as transports its <setmeta> to instance's
+  metatable.
+
+I think such <itable> idea would work. However it would require some care from the
+user if they ever wanted to define their own <set> and <setmeta>. At the very
+minimum they may need to have their metamethods invoke our <set> and/or <setmeta>
+(probably, just <setmeta>) before doing anything else. Still, it'd make for a
+nifty little trick.
+
+Alternatively, we could always roll out ~#%table~ and ~set~ only perform immutable
+operations.
+
+** Multiple dispatch
+
+I can think of at least 3 dispatch types - least generic to most generic:
+
+1. Metatable (prototype) dispatch - what we get as base,
+2. Generic single argument metatable dispatch (aka subtype dispatch),
+3. Multimethod "combined dispatch value" /isa/ dispatch,
+4. Multimethod "combined dispatch value" /implies/ dispatch.
+
+*** Thougts about dispatch
+
+At firts glance prototype dispatch is tied to tables, so it would pay to also
+offer /external/ methods. Both /isa/ and /implies/ dispatch are kindof that.
+Generics could be either external or internal (i.e. store methods on metatables).
+Methods should still be tables but with customized invocation procedures. That
+said, e.g. dot or colon notation isn't really that special. We could simply
+implement it as an cond-dispatch, that substitutes built-in types with their
+respective <type> metatables and looks up methods there. Dunno.
+
+With prototype dispatch and multi-prototype dispatch (assuming we define method
+combination for <tables>) and prototypes for built-in Racket datatypes I question
+whether 1. above really brings a new kind of dispatch? Feels like it'd only make sense
+in a class-based language and our prototypes already subsume that.
+
+I'm still a bit fuzzy on how predicate dispatch might work or what it even means, so
+need to read up on that. Things to think about:
+- do we need to relate actual predicate functions,
+- or can we distill to RDF style tables and dispatch on them,
+- e.g. think datalog, prolog, rules engine (RETE), boolean functions, decision trees.
+
+**** What is /self/ in method body?
+
+Note there isn't always an obvious /self/ to bind in method body, since 2 and 3 can
+combine arguments to produce a dispatch value. So, an possibly interesting design could
+be binding /self/ to the multi-method instance, which would provide methods to query
+the dispatch e.g. recover the dispatch value as well as method combinators e.g.
+self:next, self:next?, (get self method-value), (self:methods dispatch-value), etc.
+
+Methods should probably derive from <method> mt which at minimum impliments method
+application strategy. Obvious slots are: before, after and when.
+
+Sugar like ~defmethod~ should probably produce and install <method> instances on
+multimethod instances (e.g. on <generic> or <multi>).
+
+**** Naming things, uniformity in Self, random thoughts
+
+We need naming convention to avoid ambiguity when talking about generics:
+1. table generics to refer to table methods,
+2. generic functions to refer to simple generic dispatch on the type of the first
+   parameter,
+3. multimethods is the most generic dispatch of all in that it computes a dispatch
+   value (ala Clojure) to dispatch based on some relation defaulting to an isa?
+   relation.
+
+Could implement 2. and 3. above in terms of tables and 1.? That would be neat! I
+think we can if we allow tables to act as procedures, which in Racket we totally
+can. Interestingly, once we do, we could implement even more flexible tables with
+multimethods, maybe? So, this become essentially a bootstrapping exercise.
+
+Given 1., we first implement 2. where each generic function e.g. defined with
+~defgeneric~ is simply a table that inherits from generic-metatable.
+Generic-metatable defines ~__proc~ and ~__index~ so that the former does the
+dispatch while the latter looks up relevant method?
+
+Send, send/self, send meta, getters and setters. Note re Self and uniformity of
+call to compute vs key lookup: yes, Self attempts to be uniform, so from its point
+of view there is no difference between looking up a constant value on the table or
+"invoking" a proc stored under key to compute something, however this is not Self
+and we want to be true to Racket. With Lisp syntax e.g. for function application,
+I see little value in such forced uniformity. That said we could provide similar
+behavior by default simply by way of predefining initial ~get~, ~send~,
+~send/self~ to test if the keyed value is a procedure and simply return it if it
+isn't. It is cute, but ultimately more confusing, I think. First, know your data.
+Second, if it is value you want just use ~get~ - implicit behavior is evil when
+you have to reason how the language is going to interpret your command. Avoid!
+
+**** Arriving at /implies/ aka predicate dispatch
+
+After some thinking I realize that even Clojure multiple dispatch that performs
+ad-hoc parameter combination may not be general enough. That is because it leaves
+stuff implicit like the isa relationship it uses. That's true of any kind of
+dispatch IMO. However, if we fully reify every dispatch pushing it to conclusion I
+think we'll arrive at ... rules engines, datalog or prolog style facts and pattern
+matching on those. Seriously. Btw, even without squinting tables are nothing more
+than bags of facts (table - attribute - value triples). Shouldn't we then go all
+out, do datalog "dispatch" with other types of dispatch being but its subsets,
+which naturally we'd want to optimize? With rules engines multiple rules may match
+and fire, but with multimethods we want to induce some order: most specific to
+least specific and if required allow to call-next-method. I think datalog style
+dispatch allows for the most natural disambiguation strategy possibly at the cost
+of expensive computation:
+- each method matches on the set of facts,
+- methods may only ever relate by implication, that is one method's set of facts
+  is a strict subset of another so it is implied by the other, with the other
+  being more specific (so it comes first),
+- naturally, two methods (their fact-set) maybe implied by another method yet have
+  no obvious relationship and therefore way to prefer one over the other. This
+  should be an error to be resolved by introducing more facts into {f2} and/or
+  {f3} until they become exclusive of one another.
+
+         -- {f2}
+   {f1}<
+         -- {f3}
+
+**** Trick: delegate by swapping metatable (or prototype)
+
+One cool trick that works really well with multiple isa dispatch and prototypes is
+replacing table's prototype in a method, so that the next dispatch will choose
+different method altogether - this is very much life-like: you used to be young,
+but now you're old, so other methods apply. I really like it.
+
+This maps onto "life events" or "evolution" or "stages of life and being" e.g.
+fish gets born, enconters a predator and gets injured, gets eaten or dies. All of
+these are "fish" but different stages of being one, makes sense to model by
+swapping or "evolving" its metatable or metastatus.
+
+*** TODO <generic> dispatch
+
+Could either be its own implementation or a specialization of <multi> metatable /isa/
+dispatch with applicable optimisations.
+
+At the very minimum we may assume that:
+- dispatch arg is a table, or built-in type with predefined mt,
+- every registered method value is a metatable <some-mt>,
+- with meta-table hierarchy in place, dispatch amounts to a lookup, and
+- all registered method values will've been pre-sorted?
+
+Is the above correct?
+
+**** <generic> dispatch v1 (internal to tables)
+
+#+begin_quote
+Dispatch described here requires that relevant methods are added to relevant
+metatables, making it invasive and "local" to tables - very much a prototype
+dispatch. Our <generic> effectively defines a hierarchy of metatables.
+#+end_quote
+
+Here's an example, but I wonder if allowing to dispatch on Nth rather than juts
+the first argument is really worth it. It maybe worth implementing first arg
+dispatch to see if the below idea even works.
+
+#+begin_src racket
+  ;; where <generic> has :proc that
+  ;;
+  ;; - toposorts :method values found on inheritance chain of the table passed (d),
+  ;; - combines these methods nesting in instances of <generic-method>
+         {<generic-method>
+          (:next-method {<generic-method>
+                         (:next-method {<generic-method> ...})
+                         (:<proc> second-most-specific-method)})
+          (:<proc> most-specific-method)}
+  ;; - mixes in the table past with that combination (how?)
+  ;;
+  ;; This combined method effectively is a list of :next-method by specificity that
+  ;; can be looked up on self. Because it has the original table mixed in, its
+  ;; contents is also available on self. This ensures that we can still call :meth
+  ;; as a simple table method if we wanted to as well as a generic. Simplest and
+  ;; least convoluted case of course is when we dispatch on the first argument.
+  (define meth {<generic> (:method :meth)
+                          ;; dispatch on d, if no :dispatch assume dispatching on
+                          ;; the first argument
+                          (:dispatch (λ (self a b #:kw c d) d))
+                          ;; either specify how to toposort
+                          (:sort (λ (table) (topsorted list of metatables
+                                                       (in table's table chain))))
+                          ;; or function to compare metatable precedence
+                          (:comp (λ (mta mtb) (return args sorted in order of
+                                                      precedence)))})
+
+  ;; say we have the following metatables defined
+  (define <a> {<table> (:meth (λ (self a b #:kw c d) (push 'a (get d :vals))))})
+  (define <b> {<a> (:meth (λ (self a b #:kw c d)
+                            ;; calls <a>.meth
+                            (when self.next-method
+                              ;; bit of ugliness here, notice the . not : that is
+                              ;; because it will effectively turn into a table in
+                              ;; app position, which turns into table:<proc> call,
+                              ;; so in it self will be bound to table, which is what
+                              ;; we want. Alternative solution would be to have
+                              ;; <generic-method>:<proc> defined so that it ignores
+                              ;; the first argument, then we could use
+                              ;; self:next-method, which feels more consistent.
+                              (self.next-method a b #:kw c d))
+                            ;; should result in ('b 'a)
+                            (push 'b (get d :vals))))})
+  ;; assume <d> is <tables> of <c> and <b> in that order i.e.
+  ;;
+  ;;       |<c>|
+  ;; <d> <
+  ;;       |<b>|
+  ;;
+  ;; c pushes 'c but first delegates to next-method, like 'b
+  ;; d pushes 'd but first delegates to next-method, like 'b and 'c
+#+end_src
+
+Of course instead of being clever we could simply demand that every generic method
+must be <generic-method> whose :<proc> is the body of the method. Of course we
+would provide some syntactic sugar. Better yet, we could allow both, then the
+dispatch would only need to check if method isa <generic-method> and avoid
+wrapping it as one.
+
+#+begin_src racket
+  (define meth {<generic> (:method :meth)
+                          ;; dispatch on d
+                          (:dispatch (λ (self a b #:kw c d) d))})
+
+  ;; this looks consitent with (define (t:method ...) ...).
+  (defgeneric (tb:meth a b #:kw c d)
+    (when self.next-method
+      (self:next-method a b #:kw c d))
+    (push 'b (get d :vals)))
+#+end_src
+
+only concern in this syntax is that this would instantiate from the default
+generic method, but what if user wants to install their extension of
+<generic-method>? One solution is for ~defgeneric~ to accept relevant metatable as
+keyword arg, say #:as or #:meta or #:<generic-method>. Another is to not bother
+and let the user define their own sugar e.g. ~defmygeneric~.
+
+**** <generic> dispatch v2 (external to tables)
+
+Alternative to v1 is to encapsulate all methods in the <generic> instance, that is
+adding a method for <t> amounts to setting <t> key in <generic> instance to a
+function. This avoids touching metatables, but raises a question of hierarchy,
+since now on dispatch we have to isa? compare dispatch value with keys in our
+<generic> instance, collect and combine all that agree. While at least the default
+v1 dispatch imposes a hierarchy by following the metatable inheritance chain?
+Although, I'm still fuzzy about what exactly that "following the chain" means.
+Still, I bet we could implement similar default dispatch in v2.
+
+#+begin_src racket
+  (define meth {<generic> (:dispatch (λ (self a b #:kw c d) d))
+                          (:sort foo)
+                          (:comp bar)
+                          (:<proc> proc)})
+
+  (defgeneric (meth:<t> a b #:kw c d)
+    (when self.next-method
+      (self:next-method a b #:kw c d))
+    (push 't (get d :vals)))
+  ;; =>
+  (set meth <t> (λ (self a b #:kw c d)
+                  (when self.next-method
+                    (self:next-method a b #:kw c d))
+                  (push 't (get d :vals))))
+#+end_src
+
+**** TODO Any convenient <generic> methods we should predefine?
+
+For instance could ~get~ and ~set~ be generic? Would it be worth it?
+
+#+begin_src racket
+;; Also, consider allowing #:fail in get and set
+(get t :a :b :c #:fail (λ _ (error "no such path")))
+;; if (void) assume remedied and repeat attempt, if undefined return it
+(get t :a :b :c #:fail (λ (path last-value failed-key) do-something (void)))
+;; if returns any dict? set the failed key to that and continue
+(get t :a :b :c #:fail (λ _ {}))
+#+end_src
+
+*** TODO <multi> metatable for /isa/ multiple dispatch
+
+Method precedence, call-next-method, :before and :after method combinations.
+
+With gen:lua we can provide <tables> metatable for multiple inheritance and
+<multi> for "by relation" multimethods. We'd probably want to implement some
+default method combination stratagy. With :before and :after methods etc. I think
+this calls for methods to derive from <method>?
+
+Rough sketch:
+
+#+begin_src racket
+  ;; think multimethods
+  (define <meth> {<multi>
+                  (:dispatch (λ (a b) (cons a b)))
+                  #;(:rel eq?)
+                  (:rel isa?)
+                  #;(:sort sort-by-specificity)})
+
+  ;; what's self? Maybe its an instance of meth created once :dispatch runs,
+  ;; collects applicable methods etc, implements :next, keeps track of state while
+  ;; method executes. Might prove a powerful debugging tool.
+  (define meth {<meth> ((cons <foo> <bar>)       (λ (a b) (self:apply a.value b.value)))
+                       ;; problem: how to bind self in compute/tables definition?
+                       #;((cons <foo> <bar>)     compute/tables)
+                       ((cons 1 2)               (λ (_ _) (self:next)))
+                       ((cons <number> <number>) (λ (a b) (+ a b)))})
+
+  ;; alternative ways to define method proc
+  ;; no idea how to bind that self
+  (define (compute/tables a b) (self:apply a.value b.value))
+  ;; be explicit about self
+  (define (compute/tables self a b) (self:apply a.value b.value))
+  ;; defmethod adds extra self parameter
+  (defmethod (meth a b) #:before (cons <foo> <bar>) do-before)
+  (defmethod (meth a b) #:when (cons <foo> <bar>) (self:apply a.value b.value))
+  (defmethod (meth a b) #:after (cons <foo> <bar>) do-after)
+  ;; =>
+  (expansion
+   (define (meth/method self a b) (self:apply a.value b.value))
+   (set meth (cons <foo> <bar>) meth/method))
+  ;; multi-method metatable
+  (define compute/tables {<method> (:before (λ () do-before))
+                                   (:proc   (λ (self . args) body))
+                                   (:after  (λ () do-after))})
+
+  ;; might be easiest to just demand that any multimethod must take self parameter
+
+  (set meth (cons 3 4) (λ _ 7))
+  (set meth :default (λ _ 42))
+
+  (meth 1 2)
+  (meth 3 4)
+  (meth {foo (:value 1)} {bar (:value 2)})
+
+
+  (example
+   ;; for a built-in type like mutable hash-table
+   ;; (get (ht (:key 42)) :key)
+
+   (define <get> {<multi> (:dispatch (λ (self . keys) (meta self)))
+                          (:rel isa?)})
+   ;; or with sugar
+   (defmulti (<get> self . keys)
+     #:rel isa?
+     (meta self))
+
+   (define get {<get>
+                ;; ground for any <table>, this get: here should implement Lua style
+                ;; lookup on the table
+                (<table> (λ (self . keys) ((get: self :get) self #:rest keys)))
+                ;; built-in hash-tables
+                (<ht> (λ (self . keys) (get: self #:rest keys)))})
+
+   ;; or with sugar
+   (defmethod (get self . keys) #:when <ht>
+     (get: self #:rest keys))
+
+   ;; maybe this should always expand into {<method> (:when λ)} or wrap one in
+   ;; <method> as needed before adding it to relevent "method". We could also allow
+   ;; #:meta <meta-method> which could also extend the set of possible keys like
+   ;; :before etc.
+
+   ;; Allow method combinations by deriving from <method>
+   (set (get get <table>) {<method> (:before (λ args do-before))
+                                    (:when   (λ args do-method))
+                                    (:after  (λ args do-after))})
+   ;; example
+   )
+
+#+end_src
+
+*** TODO Predicate dispatch with ~implies?~ relation
+
+Read my [[*Thougts about dispatch][Thougts about dispatch]] first. There is something about dispatch on the
+"set-of-facts".
+
+Effectively multiple predicate dispatch that IIUC generalizes isa and probably others,
+or put differently isa dispatch is a specialization of predicate dispatch.
+
+Here's how it might work:
+- dispatch computes dispatch value as usual,
+- but we compare registered registered method values with implies? rel,
+- if dispatch value implies method value, then method applies,
+- we resolve ambiguities by pairwise implies? over method values,
+
+Could we pre-sort registered method values by implication?
+
+** Reflection
+
+Becomes really important and needs to permeate every design decision. What we have
+is an extensive graph or mesh of tables, which the user may need to observe to
+debug things.
+
+Every table will already have direct links to its metatables, but we may also want
+to have backlinks: metatable to its descendants. These would probably need to weak
+links for GC to work.
+
+Multiple dispatch with /isa/ and /implies/ must have reflective features, so that
+we maybe able to see method values registered, maybe even query for uncovered
+values when the match isn't exhaustive. I doubt we could do this in general, but
+if dispatch value and method values are "boolean" tables, then we might? Or more
+generally they may need to be in a form amenable to datalog or prolog unification
+or SMT. /prolog/ (or datalog) approach is particularly interesting, because
+reflection then amounts to querying "in reverse" of the dispatch or maybe letting
+you specify custom queries. In fact this may mean that we may need both SMT and
+/prolog/: former for dispatch, latter for reflection?
+
+** TODO Metatable hierarchy
+
+Swindle offers one such implementation but in terms of classes, obviously. This
+must include built-in Racket types and structs else it won't have much use.
+
+*** TODO Ground default hierarchy with base <table>
+
+What should <table>'s metatable be? I'd rather not have it undefined. One possible
+solution is make it circular i.e. set it to itself:
+
+#+begin_src racket
+  (define <table> (table (ht) undefined))
+  (require racket/function)
+  (set-table-meta! <table> <table>)
+  ;; ground <get>
+  (set <table> :<get> (const undefined))
+#+end_src
+
+what other metamethods (if any) should it supply?
+
+*** IDEA Extend . and :: syntax to builtins
+CLOSED: [2019-06-04 Tue 15:12]
+
+Amounts to checking the metatable of the receiver:
+- usual if its a table already,
+- substitute respective <mt> if built in type.
+
+Example:
+
+#+begin_src racket
+  (define num 42)
+  (num:as <string>)
+  ;; => checks if num is a table. Since it isn't obtain its most specific metatable
+  ;; which in this case is <integer> or maybe <natural> and wrap?
+  (define wrapped-num {<natural> (:builtin 42)})
+  (wrapped-num:as <string>)
+#+end_src
+
+*** IDEA Generic way to define metatable hierarchy (for custom relation)
+CLOSED: [2019-05-21 Tue 12:25]
+
+If we are to allow relations other than isa we'll probably need this.
+
+** IDEA <port> metatable
+  [2019-06-17 Mon]
+
+that can be used as either input-port or output-port that are kept as :source and
+:sink respectively. Sadly this cannot be implemented by defining a new table
+struct with prop:input-port and prop:output-port cause these can only be set to
+ports or integers (field positions).
+
+Two possibilities:
+- either learn how to define new properties for structs (if even there is a way),
+- or learn how to define new ports and then try to use table as a port?
+
+Its an interesting exercise in Racket vs tables interop.
+
+** Thoughts on slots
+
+First it'd be interesting to disallow undefined as slot values in the table. Since
+we control the setter, IMO we could do it. Then implement something like ~(defined
+expr)~ and ~(assert-defined . body)~ to signal any problems. This is us publically
+declaring how we signal a missing slot. CLOS takes a different approach. It
+provides a function ~slot-boundp~ that checks if slot value eq? to some
+~secret-unbound-signifier~. Might be an easier way to do it, since the user is
+unlikely to ever be able to get their hands on ~secret-unbound-signifier~ as a
+value.
+
+Slot lookup can be overriden anywhere in the mt chain. One possible lookup
+mechanism could allow ~(next-slot :slot)~ to get the next matching slot in the
+chain, or any other kind of combination of slots that share the same name.
+
+Unlike CLOS with tables IMO we tend to think of slots and methods uniformly, as in
+methods aren't special snowflakes, but simple functions attached to slots in some
+table. This brings us to what CLOS may call "class precedence list". With tables I
+think a "lookup strategies" is a better name. This is implemented as ~__index~ or
+~__get~ metamethod. I think such strategy amounts to returning a list of
+(slot-value table-of-origin), better yet a lazy stream or maybe top of that list
+and a continuation to get the next entry (generator style). So, we could expose
+~get-all~ to the user. For method calls instead of returning a function and
+placing a call, we could also implicitly bind continuation to ~next-slot~ inside
+the function just like we do with ~self~. I dunno, seams hairy, and there are many
+ways to do it, and the user is free to do as they wish, but in Metatable Protocol
+we should probably settle on some systematic way of doing that. Another strategy
+could be to either have a separate path for method invocation or have methods be a
+special type i.e. a table with some method-metatable prototype. With that we'd be
+closer to MOP. Argh, decisions. I need practical examples to see what's best.
+
+Since slot may be found anywhere on the mt chain, I guess we ought to provide a
+way to get their values with provenance e.g. (values val source) or a pair. Either
+have a separate kind of getter e.g. ~get/source~ or maybe control the way ~get~
+lookup works with a parameter. Provenance has to be part of the lookup strategy
+though, since value may be computed along the way. Does this mean user must
+provide pair of ~__index~ and ~__index/source~ or something like that? Mirrors
+Racket ~read~ and ~read-syntax~. Yet another design decision.
+
+Naturally, any slot value could itself be a table. It is possible for such slots
+to cooperate with getters, setters, etc of the table that holds the slots. So, yet
+another flexibility point.
+
+** Thoughts on identity, eq?, isa, isa?
+
+Most natural here would probably be to treat table's mt as its identity. Since
+every table must after all have an identity we can either demand that every table
+has a metatable, but by default it may just be (base) Metatable, or we treat ones
+without mt as Metatable.
+
+It follows that two tables ta and tb will be eq? in the sense that they share the
+same mt. Now, I think I talk about generic eq? here not the default shipped with
+Racket, unless I can customize the latter somehow to follow that semantics for
+tables. So, we may need to provide our own implementation of equality operators.
+
+Default isa and isa? are by design asymmetric relations. There are two possible
+semantics I think. One where we first check if ta eq? tb, that is if they are the
+same object then it follows that they are isa? related. Another, doesn't do this
+check and only deals in metatables that is inheritance. I think, I like the latter
+approach better, for if you need to check for equality why not just use eq? and
+equal?
+
+So (isa? ta tb) is true iff ta has tb somewhere in its metatable chain. I
+explicitly do not talk about prototype chain, cause it's often taken to mean
+single prototype inheritance, while I think we may want to allow multiple and in
+fact any kind of inheritance. Therefore, we say /metatable chain/.
+
+More generally, IMO all of eq?, equal?, isa, isa? ought to be generic functions.
+
+~isa~ simply returns table's mt, ~isa?~ checks if certain mt is in the table's
+chain (i.e. the table "inherits" from that mt). Note that this works well even
+with multiple inheritance since the way we are to represent it is by creating a
+table of metatables that an instance is to inherit from. That metatable inherits
+from multi-metatable. So when asked ~isa~ instance that inherits from multiple
+metatables will simply return its own metatable that's an instance of
+multi-metatable. Conceptually, this is no different than CLOS that would return
+instance's class that inherits from multiple classes. Note, it is classes that deal
+in inheritance questions, not instances. With tables, mt represents an ~isa~
+identity of a table and deals with any inheritance issues.
+
+Incidantally "reclassifying" a table into another "class" or mt is as simple as
+swapping table's mt for another one.
+
+I guess, we need to emphasize that any table has essentially two properties that
+deal with identity:
+1. identity proper that would effectively table's Racket identity (address), this
+   doesn't change even if we remove or swap out table's mt;
+2. ~isa~ identity which amounts to table's mt, that one may change as result of
+   reclassification. Corresponds to MOP's ~class-of~.
+
+What does it mean to create a hierarchy that includes Racket builtin types?
+Probably just have ~isa~ cond with Racket predicates and return corresponding
+table e.g.
