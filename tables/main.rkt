@@ -121,10 +121,39 @@
 
 
 (begin-for-syntax
-  (define-syntax-class tag
-    (pattern id:id
-             #:when
-             (regexp-match #px"^[:]\\S+" (symbol->string (syntax->datum #'id))))))
+
+  (define-values (re-tag? re-method? re-colon? re-colon-colon?)
+    (let* ((tag         #px"^:[^:]\\S*$")
+           (method      #px"^::[^:]\\S*$")
+           (colon       #px"^:$")
+           (colon-colon #px"^::$")
+           (stx->str    (compose symbol->string syntax->datum)))
+      (define ((re? rx) stx) (regexp-match rx (stx->str stx)))
+      (values (re? tag) (re? method) (re? colon) (re? colon-colon))))
+
+  (define-syntax-class tag         (pattern id:id #:when (re-tag? #'id)))
+  (define-syntax-class method      (pattern id:id #:when (re-method? #'id)))
+  (define-syntax-class colon       (pattern id:id #:when (re-colon? #'id)))
+  (define-syntax-class colon-colon (pattern id:id #:when (re-colon-colon? #'id)))
+
+  (define (method->tag stx)
+    (define tag
+      (string->symbol
+       (if (re-method? stx)
+           (substring (symbol->string (syntax->datum stx)) 1)
+           (raise-argument-error 'method->tag "syntax for ::method identifier" stx))))
+    ;; TODO should we use #%datum from macro-invocation context?
+    #`(#%datum . #,tag))
+
+  ;; TODO I am not sure this covers every possibility, but AFAIK since we are
+  ;; using it in #%app transformers will have been expanded. Better check with
+  ;; core racketeers.
+  (define (unbound? stx)
+    (define top-level-or-unbound (not (identifier-binding stx)))
+    (define not-top-level-bound (not (identifier-binding stx (syntax-local-phase-level) #t)))
+    (and top-level-or-unbound))
+
+  (define-syntax-class free-id (pattern id:id #:when (unbound? #'id))))
 
 
 (define (tag? t)
@@ -587,30 +616,60 @@
 ;; <table> dynamically scoped though? I think the same trick as with #%table would
 ;; work here.
 
+(begin-for-syntax
+
+  (define (parse-table-constructor stx)
+    (syntax-parse stx
+      #:context (list '|{}| (with-syntax (((_ e ...) stx))
+                              ;; doesn't seem to effect paren shape in error msg
+                              (syntax-property (syntax/loc stx {e ...})
+                                               'paren-shape #\{)))
+      ((_ (~optional (~seq mt:id) #:defaults ((mt #'<table>)))
+          trait:option ...
+          entry:table-entry ...)
+       #:with #%table (datum->syntax stx '#%table stx)
+       (syntax/loc stx
+         ;; (#%table <mt> ((keyword trait) ...) ((key val) ...))
+         (cond
+           ((table? mt) (#%table mt ((trait.kw trait.opt) ...) (entry ...)))
+           ((procedure? mt) (mt (#%table <table> ((trait.kw trait.opt) ...) (entry ...))))
+           (else (raise-argument-error '|{}| "table? or procedure?" mt))))))))
+
 
 (define-syntax (#%app stx)
-  (if (eq? #\{ (syntax-property stx 'paren-shape))
+  (cond
+    ((eq? #\{ (syntax-property stx 'paren-shape))
+     ;; {} => delegate to #%table constructor
+     (parse-table-constructor stx))
 
-      ;; {} => delegate to #%table constructor
-      (syntax-parse stx
-        #:context (list '|{}| (with-syntax (((_ e ...) stx))
-                                ;; doesn't seem to effect paren shape in error msg
-                                (syntax-property (syntax/loc stx {e ...})
-                                                 'paren-shape #\{)))
-        ((_ (~optional (~seq mt:id) #:defaults ((mt #'<table>)))
-            trait:option ...
-            entry:table-entry ...)
-         #:with #%table (datum->syntax stx '#%table stx)
-         (syntax/loc stx
-           ;; (#%table <mt> ((keyword trait) ...) ((key val) ...))
-           (cond
-             ((table? mt) (#%table mt ((trait.kw trait.opt) ...) (entry ...)))
-             ((procedure? mt) (mt (#%table <table> ((trait.kw trait.opt) ...) (entry ...))))
-             (else (raise-argument-error '|{}| "table? or procedure?" mt))))))
+    (else
+     ;; TODO by the time we get to #%app no unbound identifier will have been
+     ;; wrapped in #%top, so we cannot reliably tell if identifier in the app
+     ;; position is in fact unbound. We therefore perform unbound? check manually
+     ;; (with our own free-id syntax-class). Alternatively, we could force
+     ;; expansion with local-expand. What's the right way to handle this?
+     (syntax-parse stx
+       ((_ (~and app:tag _:free-id) ~! table arg ...)
+        ;; (:key table . args) =>
+        (syntax/loc stx ((get table app) arg ...)))
 
-      ;; else => delegate to Racket's #%app
-      (with-syntax (((_ . rest) stx))
-        (syntax/loc stx (racket/#%app . rest)))))
+       ((_ (~and _:colon _:free-id) ~! table key arg ...)
+        ;; (: table key . args) =>
+        (syntax/loc stx ((get table key) arg ...)))
+
+       ((_ (~and app:method _:free-id) ~! table arg ...)
+        ;; (::key table . args) =>
+        #:with tag (method->tag #'app)
+        (syntax/loc stx (let ((t table)) ((get t tag) t arg ...))))
+
+       ((_ (~and _:colon-colon _:free-id) ~! table key arg ...)
+        ;; (:: table key . args) =>
+        (syntax/loc stx (let ((t table)) ((get t key) t arg ...))))
+
+       (_
+        ;; => delegate to Racket's #%app
+        (with-syntax (((_ . rest) stx))
+          (syntax/loc stx (racket/#%app . rest))))))))
 
 
 (module+ test
@@ -638,7 +697,20 @@
 
   (test-case "Use #%table from macro invocation context"
     (let-syntax ([#%table (syntax-rules () [(_ mt (trait ...) (entry ...)) (ht entry ...)])])
-      (check-equal? (ht (:a 1)) {(:a 1)}))))
+      (check-equal? (ht (:a 1)) {(:a 1)})))
+
+  (test-case ": and :: syntax in app position"
+    (define/checked tb {(:a 1)
+                        (:meth (λ (self key) (get self key)))
+                        (:bound (const 42))})
+    (check-eq? (:meth tb tb :a) 1)
+    (check-eq? (::meth tb :a) 1)
+    (check-eq? (: tb :meth tb :a) 1)
+    (check-eq? (:: tb :meth :a) 1)
+    (check-exn exn? (thunk (define :bound 42) (:bound tb)) "application: not a procedure")
+    (check-exn exn? (thunk (define :bound 42) (: tb :bound)) "application: not a procedure")
+    ;; but
+    (check-eq? (let ((:bound 42)) (::bound tb)) 42)))
 
 
 ;;* <spec> ------------------------------------------------------- *;;
