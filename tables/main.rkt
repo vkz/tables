@@ -16,7 +16,7 @@
 
 (provide (rename-out [#%top table-#%top] [#%app table-#%app]
                      [table-instance table])
-         #%table #%.
+         #%table #%:
          get set rm meta-dict-ref
          isa isa?
          table?
@@ -158,30 +158,16 @@
 
 
 ;; TODO is this too repetitive? At least its clear. Probably need . .. : :: ops in
-;; app position to do it. Also not happy with how #%top and #%. interact.
-(define-syntax-parser #%.
-  ((_ "." (~var id (table-sep-key ".")))
+;; app position to do it. Also not happy with how #%top and #%: interact.
+(define-syntax-parser #%:
+  ((_ ":" (~var id (table-sep-key ":")))
    (syntax/loc #'id (or? (get id.table 'id.tag)
                          (get id.table 'id.sym))))
 
-  ((_ ".." (~var id (table-sep-key "..")))
-   (syntax/loc #'id (or? (get (or? (table-meta id.table) {}) 'id.tag)
-                         (get (or? (table-meta id.table) {}) 'id.sym))))
-
-  ((_ ":" (~var id (table-sep-key ":")))
+  ((_ "::" (~var id (table-sep-key "::")))
    (syntax/loc #'id
      (let ((proc (or? (get id.table 'id.tag)
                       (get id.table 'id.sym))))
-       (unless (procedure? proc)
-         (raise-result-error 'id "procedure?" proc))
-       (make-keyword-procedure
-        (λ (kws kw-args . rest) (keyword-apply proc kws kw-args id.table rest))
-        (λ args (apply proc id.table args))))))
-
-  ((_ "::" (~var id (table-sep-key "::")))
-   (syntax/loc #'id
-     (let ((proc (or? (get (or? (table-meta id.table) {}) 'id.tag)
-                      (get (or? (table-meta id.table) {}) 'id.sym))))
        (unless (procedure? proc)
          (raise-result-error 'id "procedure?" proc))
        (make-keyword-procedure
@@ -196,12 +182,12 @@
   (syntax-parse stx
 
     ((_ . id:id)
-     ;; table.key =>
-     #:attr split (table-sep-key? #'id ".." "::" "." ":")
+     ;; table:key =>
+     #:attr split (table-sep-key? #'id "::" ":")
      #:when (attribute split)
      #:with sep (car (attribute split))
-     #:with #%. (datum->syntax #'id '#%. #'id)
-     (syntax/loc #'id (#%. sep id)))
+     #:with #%: (datum->syntax #'id '#%: #'id)
+     (syntax/loc #'id (#%: sep id)))
 
     ((_ . id:tag)
      ;; :tag =>
@@ -215,7 +201,7 @@
 
 
 (module+ test
-  (test-case "t.k and t:k accessors"
+  (test-case "t:k and t::k accessors"
     (define <proc> {(:<proc> (λ (mt t k) (get t k)))})
     (define proc {<proc>})
     (define t {(:a 1)
@@ -223,19 +209,11 @@
                (:f (λ (t k) (get t k)))
                ;; struct procedure
                (:proc proc)})
-    (check-eq? t.a 1)
-    (check-eq? (t.f t :a) 1)
-    (check-eq? (t:f :a) 1)
-    (check-eq? (t.proc t :a) 1)
-    (check-eq? (t:proc :a) 1))
-
-  (test-case "t..k and t::k accessors"
-    (define <mt> {(:a 1)
-                  (:f (λ (t k) (get t k)))})
-    (define t {<mt>})
-    (check-eq? t..a 1)
-    (check-eq? (t..f t :a) 1)
-    (check-eq? (t::f :a) 1)))
+    (check-eq? t:a 1)
+    (check-eq? (t:f t :a) 1)
+    (check-eq? (t::f :a) 1)
+    (check-eq? (t:proc t :a) 1)
+    (check-eq? (t::proc :a) 1)))
 
 
 ;;* table struct ------------------------------------------------- *;;
@@ -258,7 +236,7 @@
        (if (procedure? proc)
            ;; NOTE t here will always be bound to the table that was invoked as
            ;; procedure i.e. table whose metatable specifies (:<proc> proc) - a
-           ;; consequence of how Racket prop:procedure operates. This means that
+           ;; consequence of how Racket prop::procedure operates. This means that
            ;; proc must be a procedure of at least one argument.
            (keyword-apply proc kws kw-args t rest)
            (error "table has no <proc> metamethod to apply"))))))
@@ -373,7 +351,7 @@
   (or (eq? mt <mt>)
       (cond
         ((table? metamethod) (or (eq? metamethod <mt>) (isa? metamethod <mt>)))
-        ((procedure? metamethod) (t:<isa?> <mt>))
+        ((procedure? metamethod) (t::<isa?> <mt>))
         ((undefined? metamethod) #f)
         (else (raise-argument-error '<isa?> "table or procedure" metamethod)))
       ;; continue search up the metatable chain
@@ -705,17 +683,17 @@
                       ;; remove :<setmeta> slot from :check table - ugly
                       (rm spec :<setmeta>)
                       (set mt :check spec)
-                      (set mt :<setmeta> (λ (t) (t:check)))
-                      (set mt :<set> (λ (t k v) (t:check k v) (dict-set! t k v) t))
+                      (set mt :<setmeta> (λ (t) (t::check)))
+                      (set mt :<set> (λ (t k v) (t::check k v) (dict-set! t k v) t))
                       mt))))})
 
 
-(define <open> {<spec> (:<proc> <spec>.open)
-                       (:<setmeta> <spec>.setmeta)})
+(define <open> {<spec> (:<proc> <spec>:open)
+                       (:<setmeta> <spec>:setmeta)})
 
 
-(define <closed> {<spec> (:<proc> <spec>.closed)
-                         (:<setmeta> <spec>.setmeta)})
+(define <closed> {<spec> (:<proc> <spec>:closed)
+                         (:<setmeta> <spec>:setmeta)})
 
 
 (module+ test
@@ -732,7 +710,7 @@
     (check-exn exn? (thunk (set t :c 42))  "slot :c violated its contract")
     (check-exn exn? (thunk (set t :b 42))  "slot :c violated its contract")
     ;; happy path
-    (check-eq? t.c 'c)
+    (check-eq? t:c 'c)
     (check-eq? (get (set t :b 'b) :b) 'b))
 
 
@@ -749,7 +727,7 @@
     (check-exn exn? (thunk {<mt> (:c 42)}) "slot :c violated its contract")
     (check-exn exn? (thunk (set t :c 42))  "slot :c violated its contract")
     (check-exn exn? (thunk (set t :b 42))  "slot :c violated its contract")
-    (check-eq? t.c 'c)
+    (check-eq? t:c 'c)
     (check-eq? (get (set t :b 'b) :b) 'b)))
 
 
@@ -821,26 +799,12 @@
 (define-syntax (define/table stx)
 
   (syntax-parse stx
-    ((_ (~var id (table-sep-key "..")) rhs:expr)
-     ;; (define t..k val) =>
-     (syntax/loc stx
-       (begin
-         (define t..k rhs)
-         (void (set (table-meta id.table) 'id.tag t..k)))))
-
-    ((_ (~var id (table-sep-key ".")) rhs:expr)
-     ;; (define t.k val) =>
-     (syntax/loc stx
-       (begin
-         (define t.k rhs)
-         (void (set id.table 'id.tag t.k)))))
-
     ((_ (~var id (table-sep-key "::")) rhs:expr)
      ;; (define t::k val) =>
      (syntax/loc stx
        (begin
          (define t::k rhs)
-         (void (set (table-meta id.table) 'id.tag t::k)))))
+         (void (set id.table 'id.tag t::k)))))
 
     ((_ (~var id (table-sep-key ":")) rhs:expr)
      ;; (define t:k val) =>
@@ -854,21 +818,19 @@
      (syntax/loc stx (define id rhs)))
 
     (_
-     ;; (define (t..k ...) body)
-     ;; (define (t.k ...) body)
      ;; (define (t::k ...) body)
      ;; (define (t:k ...) body)
      ;; (define (id ...) body)
      ;; =>
      (let-values (((id rhs) (normalize-definition stx #'lambda #t #t)))
        (cond
-         ((table-sep-key? id ".." ".")
-          (with-syntax ((λ rhs)
+         ((table-sep-key? id "::")
+          (with-syntax ((λ (λ/self rhs (datum->syntax id 'self)))
                         (id id))
             (syntax/loc stx (define/table id λ))))
 
-         ((table-sep-key? id "::" ":")
-          (with-syntax ((λ (λ/self rhs (datum->syntax id 'self)))
+         ((table-sep-key? id ":")
+          (with-syntax ((λ rhs)
                         (id id))
             (syntax/loc stx (define/table id λ))))
 
@@ -881,21 +843,21 @@
 (module+ test
   (test-case "define/table"
     (define t {})
-    (checked (define/table t.a 1))
-    (checked (define/table t.b 2))
-    (checked (define/table (t.foo a) a))
-    (check-eq? (t.foo 1) 1)
-    (checked (define/table ((t.bar a) b) (+ a b)))
-    (check-eq? ((t.bar 1) 2) 3)
-    (checked (define/table (t.baz a #:b (b 2)) (+ a b)))
-    (check-eq? (t.baz 1) 3)
-    (check-eq? (t.baz 1 #:b 0) 1)
-    (checked (define/table (t:get k) (get self k)))
-    (check-eq? (t:get :a) 1)
-    (checked (define/table ((t:get+ k1) k2) (+ (self:get k1) (self:get k2))))
-    (check-eq? ((t:get+ :a) :b) 3)
-    (checked (define/table (t:get* . keys) (apply + (map (curry get self) keys))))
-    (check-eq? (t:get* :a :b) 3)
+    (checked (define/table t:a 1))
+    (checked (define/table t:b 2))
+    (checked (define/table (t:foo a) a))
+    (check-eq? (t:foo 1) 1)
+    (checked (define/table ((t:bar a) b) (+ a b)))
+    (check-eq? ((t:bar 1) 2) 3)
+    (checked (define/table (t:baz a #:b (b 2)) (+ a b)))
+    (check-eq? (t:baz 1) 3)
+    (check-eq? (t:baz 1 #:b 0) 1)
+    (checked (define/table (t::get k) (get self k)))
+    (check-eq? (t::get :a) 1)
+    (checked (define/table ((t::get+ k1) k2) (+ (self::get k1) (self::get k2))))
+    (check-eq? ((t::get+ :a) :b) 3)
+    (checked (define/table (t::get* . keys) (apply + (map (curry get self) keys))))
+    (check-eq? (t::get* :a :b) 3)
     (define/table a 1)
     (check-eq? a 1)))
 
@@ -934,14 +896,14 @@
 (define <tables> {})
 
 
-(define/table (<tables>:<isa?> mt)
+(define/table (<tables>::<isa?> mt)
   (define tables self)
   (for/or ((t (in-dict-values tables)))
     (or (eq? t mt)
         (isa? t mt))))
 
 
-(define/table (<tables>:<get> k)
+(define/table (<tables>::<get> k)
   ;; TODO for now order is induced by symbolic keys, at least until we start using
   ;; insertion ordered hash-maps for table contents. Alternative would be to store
   ;; parent tables in a list under e.g. :tables
@@ -956,20 +918,20 @@
 
 (module+ test
   (test-case "<tables>"
-    (define/checked <mt1> {(:do-1 (λ (t) t.a))
-                           (:do (λ (t) (t:do-1)))})
+    (define/checked <mt1> {(:do-1 (λ (t) t:a))
+                           (:do (λ (t) (t::do-1)))})
 
-    (define/checked <mt2> {(:do-2 (λ (t) t.b))
-                           (:do (λ (t) (t:do-2)))})
+    (define/checked <mt2> {(:do-2 (λ (t) t:b))
+                           (:do (λ (t) (t::do-2)))})
 
 
     (define/checked <mts> {<tables> (:mt1 <mt1>)
                                     (:mt2 <mt2>)})
 
     (define/checked ts {<mts> (:a 1) (:b 2)})
-    (check-eq? (ts:do) 1)
-    (check-eq? (ts:do-1) 1)
-    (check-eq? (ts:do-2) 2)
+    (check-eq? (ts::do) 1)
+    (check-eq? (ts::do-1) 1)
+    (check-eq? (ts::do-2) 2)
     (check-true (isa? ts <tables>))
     (check-true (isa? ts <mts>))
     (check-true (isa? ts <mt1>))

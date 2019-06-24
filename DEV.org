@@ -77,15 +77,15 @@ is oblivious to metatables and inheritance. Think ~rawget~ and ~rawset~ in Lua.
 *** TODO allow nested keys in get and set [0/4]
 
 **** TODO get nested keys
-SCHEDULED: <2019-06-23 Sun>
+SCHEDULED: <2019-06-25 Tue>
 
 (get t :a :b :c) ala our get:
 
 **** TODO allow #:default in get
-SCHEDULED: <2019-06-23 Sun>
+SCHEDULED: <2019-06-25 Tue>
 
 **** TODO set nested keys (allow intermediate key missing)
-SCHEDULED: <2019-06-23 Sun>
+SCHEDULED: <2019-06-25 Tue>
 
 basically same semantics as our set: but user may specify what associative data
 structure to insert at a missing intermediate key. Simplest solution would
@@ -102,7 +102,7 @@ Far as I can tell this has no overhead whatsoever. Obviously, tables.rkt and #la
 racket/tables will provide the default binding e.g. to the ~{}~ constructor.
 
 **** TODO consider allowing #:default or #:missing in set
-SCHEDULED: <2019-06-23 Sun>
+SCHEDULED: <2019-06-25 Tue>
 
 as an adhoc way to override the associative data structure to use in place of a
 value for a missing key
@@ -692,8 +692,13 @@ metamethod doing necessary checks!
 
 ** . : .. :: syntax
 
-*** TODO consider ditching . syntax in tables
-SCHEDULED: <2019-06-23 Sun>
+*** DONE consider ditching . syntax in tables
+CLOSED: [2019-06-24 Mon 12:07] SCHEDULED: <2019-06-24 Mon>
+- State "DONE"       from "STARTED"    [2019-06-24 Mon 12:07] \\
+  Both . and .. separators have now been removed. We only use two : and ::.
+:LOGBOOK:
+CLOCK: [2019-06-24 Mon 10:02]--[2019-06-24 Mon 12:07] =>  2:05
+:END:
 
 beginning to think that :: syntax isn't terribly useful. If we ditch current ::
 semantics then we may have more consistent syntax without . and .. that is:
@@ -719,7 +724,7 @@ so then:
 #+end_src
 
 *** TODO : and :: for method application
-SCHEDULED: <2019-06-23 Sun>
+SCHEDULED: <2019-06-24 Mon>
 
 but beware of current :tags implementation, appears it rewrites standalone : into
 ':: - I'll probably want to fix that at least in the app position. Question to ask
@@ -835,7 +840,7 @@ CLOSED: [2019-06-10 Mon 11:38]
 - State "DONE"       from "TODO"       [2019-06-10 Mon 11:38] \\
   For now we rely of Racket struct-info to reflect table constructor procedure.
 *** TODO Implement match expander for tables
-SCHEDULED: <2019-06-23 Sun>
+SCHEDULED: <2019-06-24 Mon>
 
 basically extend, move and rename my ht, ht* expanders from prelude to tables.rkt.
 
@@ -1182,7 +1187,7 @@ semantics for simple method lookup and precedence.
 CLOSED: [2019-06-10 Mon 13:40]
 
 *** TODO semantics of using table as a #:kw trait?
-SCHEDULED: <2019-06-23 Sun>
+SCHEDULED: <2019-06-24 Mon>
 
 presently #:kw trait can be either a table or a procedure. When a table its
 <setmeta> metamethod is called as the last ~add-traits~ step inside the
