@@ -723,8 +723,14 @@ so then:
   t::bar
 #+end_src
 
-*** TODO : and :: for method application
-SCHEDULED: <2019-06-24 Mon>
+*** DONE : and :: for method application
+CLOSED: [2019-06-24 Mon 16:24] SCHEDULED: <2019-06-24 Mon>
+- State "DONE"       from "STARTED"    [2019-06-24 Mon 16:24] \\
+  Ended up simply defining : and :: as kw-procedures. This should allow using them
+  even for methods with keyword arguments both with apply and keyword-apply.
+:LOGBOOK:
+CLOCK: [2019-06-24 Mon 13:13]--[2019-06-24 Mon 16:24] =>  3:11
+:END:
 
 but beware of current :tags implementation, appears it rewrites standalone : into
 ':: - I'll probably want to fix that at least in the app position. Question to ask
@@ -733,8 +739,8 @@ something we can pass around?
 
 #+begin_src racket
   ;; having this
-  (apply: t k a b rest)
-  (apply:: t k a b rest)
+  (apply : t k t a b rest)
+  (apply :: t k a b rest)
 
   (:meth t a b c)
   (::meth t a b c)

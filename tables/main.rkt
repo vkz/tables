@@ -16,7 +16,7 @@
 
 (provide (rename-out [#%top table-#%top] [#%app table-#%app]
                      [table-instance table])
-         #%table #%:
+         #%table #%: : ::
          get set rm meta-dict-ref
          isa isa?
          table?
@@ -161,7 +161,7 @@
        (string-prefix? (symbol->string t) ":")))
 
 
-;;* #%. ---------------------------------------------------------- *;;
+;;* #%: ---------------------------------------------------------- *;;
 
 
 (begin-for-syntax
@@ -591,7 +591,7 @@
          (add-traits (metamethod t) (list (list 'kw trait) ...)))))))
 
 
-;;** - table --------------------------------------------------- *;;
+;;** - table ----------------------------------------------------- *;;
 
 
 (define-syntax-parser table-instance
@@ -608,7 +608,7 @@
      (table-instance #:mt <table> entry ...))))
 
 
-;;** - {#%app} --------------------------------------------------- *;;
+;;** - {} -------------------------------------------------------- *;;
 
 
 ;; TODO would it make sense to use <table> binding at the call site? Thereby
@@ -636,6 +636,21 @@
            (else (raise-argument-error '|{}| "table? or procedure?" mt))))))))
 
 
+;;* #%app -------------------------------------------------------- *;;
+
+
+(define : (make-keyword-procedure
+           (λ (kws kw-args table key . rest)
+             (keyword-apply (get table key) kws kw-args rest))
+           (λ (table key . rest) (apply (get table key) rest))))
+
+
+(define :: (make-keyword-procedure
+            (λ (kws kw-args table key . rest)
+              (keyword-apply (get table key) kws kw-args table rest))
+            (λ (table key . rest) (apply (get table key) table rest))))
+
+
 (define-syntax (#%app stx)
   (cond
     ((eq? #\{ (syntax-property stx 'paren-shape))
@@ -653,18 +668,10 @@
         ;; (:key table . args) =>
         (syntax/loc stx ((get table app) arg ...)))
 
-       ((_ (~and _:colon _:free-id) ~! table key arg ...)
-        ;; (: table key . args) =>
-        (syntax/loc stx ((get table key) arg ...)))
-
        ((_ (~and app:method _:free-id) ~! table arg ...)
         ;; (::key table . args) =>
         #:with tag (method->tag #'app)
         (syntax/loc stx (let ((t table)) ((get t tag) t arg ...))))
-
-       ((_ (~and _:colon-colon _:free-id) ~! table key arg ...)
-        ;; (:: table key . args) =>
-        (syntax/loc stx (let ((t table)) ((get t key) t arg ...))))
 
        (_
         ;; => delegate to Racket's #%app
@@ -701,12 +708,25 @@
 
   (test-case ": and :: syntax in app position"
     (define/checked tb {(:a 1)
-                        (:meth (λ (self key) (get self key)))
+                        (:b 2)
+                        (:meth (λ (self . keys) (for/list ((k keys)) (get self k))))
+                        (:kwmeth (λ (self #:key k) (get self k)))
                         (:bound (const 42))})
-    (check-eq? (:meth tb tb :a) 1)
-    (check-eq? (::meth tb :a) 1)
-    (check-eq? (: tb :meth tb :a) 1)
-    (check-eq? (:: tb :meth :a) 1)
+    (check-equal? (:meth tb tb :a) '(1))
+    (check-equal? (: tb :meth tb :a) '(1))
+
+    (check-equal? (::meth tb :a) '(1))
+    (check-equal? (:: tb :meth :a) '(1))
+
+    (check-equal? (apply : tb :meth tb '(:a :b)) '(1 2))
+    (check-equal? (apply :: tb :meth '(:a :b)) '(1 2))
+
+    (check-eq? (::kwmeth tb #:key :a) 1)
+    (check-eq? (:: tb :kwmeth #:key :a) 1)
+    (check-eq? (keyword-apply : '(#:key) '(:a) tb :kwmeth (list tb)) 1)
+    (check-eq? (keyword-apply :: '(#:key) '(:a) tb :kwmeth '()) 1)
+    (check-eq? (keyword-apply :: #:key :a '() '() tb :kwmeth '()) 1)
+
     (check-exn exn? (thunk (define :bound 42) (:bound tb)) "application: not a procedure")
     (check-exn exn? (thunk (define :bound 42) (: tb :bound)) "application: not a procedure")
     ;; but
