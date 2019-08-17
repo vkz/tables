@@ -25,7 +25,7 @@
          set-table-meta! set-table-dict!
          <table>
          <spec> <open> <closed>
-         required optional ! ?
+         required optional req opt
          <tables>
          <table/evt>
          tag?
@@ -53,6 +53,11 @@
 
   (require racket/undefined)
   (provide (all-defined-out) undefined)
+
+
+  (define (? v [when-undefined #f])
+    (if (eq? undefined v) when-undefined v))
+
 
   (define (undefined? e)
     (eq? undefined e))
@@ -100,7 +105,15 @@
 
 
 (module+ test
-  (test-case "or? and? combinators"
+  (test-case "undefined aware logic"
+
+    ;; ?
+    (check-false (? undefined))
+    (check-true (? undefined #t))
+    (check-eq? (? 42) 42)
+    (check-eq? (? 42 #f) 42)
+    (check-false (? #f #t))
+
     ;; or?
     (check-eq? (or? undefined #f 42) 42)
     (check-eq? (or? 42) 42)
@@ -108,11 +121,13 @@
     (check-eq? (or? undefined) undefined)
     (check-eq? (or? #f undefined) undefined)
     (check-eq? (or? undefined #f undefined) undefined)
+
     ;; and?
     (check-eq? (and? 42) 42)
     (check-eq? (and? #f) #f)
     (check-eq? (and? undefined) undefined)
     (check-eq? (and? undefined #f undefined) undefined)
+
     ;; or? and? combined
     (check-eq? (and? (or? undefined 42) (or? undefined) 42) undefined)))
 
@@ -186,12 +201,13 @@
              #:with sym   (datum->syntax #'id (string->symbol key) #'id))))
 
 
-;; TODO is this too repetitive? At least its clear. Probably need . .. : :: ops in
-;; app position to do it. Also not happy with how #%top and #%: interact.
 (define-syntax-parser #%:
   ((_ ":" (~var id (table-sep-key ":")))
    (syntax/loc #'id (or? (get id.table 'id.tag)
-                         (get id.table 'id.sym))))
+                         (get id.table 'id.sym)
+                         ;; TODO consider also looking up string key
+                         ;; (get id.table 'id.str)
+                         )))
 
   ((_ "::" (~var id (table-sep-key "::")))
    (syntax/loc #'id
@@ -823,7 +839,7 @@
     (check-eq? (get (set t :b 'b) :b) 'b)))
 
 
-;;** - ? and ! combinators --------------------------------------- *;;
+;;** - spec combinators ------------------------------------------ *;;
 
 
 (define (required . c) (apply and/c (compose not undefined?) c))
@@ -832,18 +848,18 @@
   (apply or/c undefined? contract))
 
 
-(define-syntax-parser !
+(define-syntax-parser req
   ((_ c:expr ...) (syntax/loc this-syntax (required c ...)))
   (_:id (syntax/loc this-syntax (required))))
 
 
-(define-syntax-parser ?
+(define-syntax-parser opt
   ((_ c:expr ...) (syntax/loc this-syntax (optional c ...)))
   (_:id (syntax/loc this-syntax (optional))))
 
 
 (module+ test
-  (test-case "? and ! contract combinators"
+  (test-case "opt and req contract combinators"
     (define/checked string-or-num! (required (or/c string? number?)))
     (define/checked string-or-num? (optional (or/c string? number?)))
     (check-true (string-or-num! 42))
@@ -851,18 +867,18 @@
     (check-false (string-or-num! undefined))
     (check-true (string-or-num? undefined))
     (check-false (string-or-num? 's))
-    (check-false ((!) undefined))
-    (check-true ((?) undefined))
-    (check-true ((?) 42))
+    (check-false ((req) undefined))
+    (check-true ((opt) undefined))
+    (check-true ((opt) 42))
 
-    (define/checked <mt> {#:check {<open> (:? (? (or/c string? symbol?)))
-                                          (:! (! number?))}})
+    (define/checked <mt> {#:check {<open> (:? (opt (or/c string? symbol?)))
+                                          (:! (req number?))}})
     (check-exn exn? (thunk {<mt>}) "slot :! violated its contract")
     (check-exn exn? (thunk {<mt> (:! 1) (:? 2)}) "slot :? violated its contract")
     (check-eq? (get {<mt> (:! 42)} :!) 42)
 
-    (define/checked <mtt> {#:check {<open> (:? ?)
-                                           (:! !)}})
+    (define/checked <mtt> {#:check {<open> (:? opt)
+                                           (:! req)}})
     (check-exn exn? (thunk {<mtt>}) "slot :! violated its contract")
     (check-eq? (get {<mtt> (:! '!)} :!) '!)
     (check-eq? (get {<mtt> (:! '!) (:? '?)} :?) '?)))

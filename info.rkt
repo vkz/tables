@@ -2,6 +2,4 @@
 
 (define collection 'multi)
 
-(define deps
-  '("prelude/tilda"
-    "prelude"))
+(define deps '("tilda"))

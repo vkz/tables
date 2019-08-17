@@ -26,6 +26,32 @@ candidates are setters, converters (as), printers, getters, etc (see Swindle's
   ;; where <string> is bound to string-metatable
 #+end_src
 
+** TODO Document tables.rkt
+
+*** TODO README.org for tables.rkt
+  [2019-06-26 Wed]
+
+*** TODO Scribble tables.rkt
+  [2019-06-26 Wed]
+
+*** TODO Example: have t:key syntax also look for "key"
+
+#+begin_src racket
+  (define t {("FCGI_MAX_CONNS"  10)})
+  t:FCGI_MAX_CONNS
+  ;; =>
+  10
+#+end_src
+
+Since this basically require tweaking #%: a little, this is an interesting
+test-case for my indirection with #%: i.e. implement this feature by providing
+extended version of #%: e.g. in fcgi.rkt.
+
+** TODO Release tables.rkt
+DEADLINE: <2019-09-14 Sat>
+
+announce on list
+
 ** DONE #lang racket/tables racket/base/tables
 CLOSED: [2019-06-23 Sun 14:01] SCHEDULED: <2019-06-23 Sun>
 - State "DONE"       from "STARTED"    [2019-06-23 Sun 14:01] \\
@@ -74,18 +100,23 @@ is oblivious to metatables and inheritance. Think ~rawget~ and ~rawset~ in Lua.
 
 ** Basic metatable semantics
 
-*** TODO allow nested keys in get and set [0/4]
+*** TODO consider a way to delegate up the chain
 
-**** TODO get nested keys
-SCHEDULED: <2019-06-25 Tue>
+atm it is quite awkward to delegate (perform get) to the chain above the
+instance's metatable.
+
+*** TODO allow nested keys in get and set [4/4]
+
+**** IDEA get nested keys
+CLOSED: [2019-06-29 Sat 09:18] SCHEDULED: <2019-07-01 Mon>
 
 (get t :a :b :c) ala our get:
 
-**** TODO allow #:default in get
-SCHEDULED: <2019-06-25 Tue>
+**** IDEA allow #:default in get
+CLOSED: [2019-06-29 Sat 09:18] SCHEDULED: <2019-07-01 Mon>
 
-**** TODO set nested keys (allow intermediate key missing)
-SCHEDULED: <2019-06-25 Tue>
+**** IDEA set nested keys (allow intermediate key missing)
+CLOSED: [2019-06-29 Sat 09:18] SCHEDULED: <2019-07-01 Mon>
 
 basically same semantics as our set: but user may specify what associative data
 structure to insert at a missing intermediate key. Simplest solution would
@@ -101,8 +132,8 @@ produce an instance of said structure to be inserted for the missing key value.
 Far as I can tell this has no overhead whatsoever. Obviously, tables.rkt and #lang
 racket/tables will provide the default binding e.g. to the ~{}~ constructor.
 
-**** TODO consider allowing #:default or #:missing in set
-SCHEDULED: <2019-06-25 Tue>
+**** IDEA consider allowing #:default or #:missing in set
+CLOSED: [2019-06-29 Sat 09:18] SCHEDULED: <2019-07-01 Mon>
 
 as an adhoc way to override the associative data structure to use in place of a
 value for a missing key
@@ -117,8 +148,34 @@ constructor expression.
 
 haven't looked at yet but [[https://jsonnet.org/][jsonnet templating language]] may have this and more ideas
 
-*** TODO rethink undefined aware logic
+this effectively turns any table with self into a dependency graph a-la integrant,
+which may prove very powerful, cause those are pervasive in real-world systems.
 
+To make it less awkward, self ought to be lexical (i.e. scoped like a variable)
+rather than just a syntactic placeholder. This probably means user needs to pass
+it in from the outer scope a-la (lambda (self) ...)
+
+#+begin_src racket
+  {#:self self
+   (:a 1)
+   (:b 2)
+   ;; NOTE :c depends on :b implicitly, so likely to be lost without
+   ;; some crazy static analysis. Guess its on user to make it explicit:
+   ;;
+   ;;   (:c (list self:a (self::f (ref :b))))
+   ;;
+   ;; better yet change f so it takes self:b instead of :b
+   ;;
+   ;;   (:c (list self:a (self::f self:b)))
+   ;;   (:f (λ (t v) (inc v)))
+   (:c (list self:a (self::f :b)))
+   (:f (λ (t key) (inc t:key)))}
+#+end_src
+
+*** DONE rethink undefined aware logic
+CLOSED: [2019-08-17 Sat 11:07]
+
+- State "DONE"       from "TODO"       [2019-08-17 Sat 11:07]
 I don't think its worked out so far. Too easy to use the wrong logic combinator:
 Racket vs tables. Perhaps the answer is to have ? signify that given undefined
 value it should cast it to #f (that is we want to use it in Racket context) or
@@ -128,6 +185,33 @@ return any value other than undefined as is:
   (? val)
   (? (get t :k))
   t:k?
+#+end_src
+
+**** DONE ? operator for undefined values
+CLOSED: [2019-06-25 Tue 09:56] SCHEDULED: <2019-06-25 Tue>
+- State "DONE"       from "STARTED"    [2019-06-25 Tue 09:56] \\
+  Had to rename <spec> combinators from ? and ! to opt and req.
+:LOGBOOK:
+CLOCK: [2019-06-25 Tue 09:24]--[2019-06-25 Tue 09:56] =>  0:32
+:END:
+
+? takes 2 args defaulting the secord to #f. If the first arg is undefined return
+the 2nd arg, else return the 1 arg unchanged. I hope this would simplify handling
+undefined values immensely and bridge their use into broader Racket ecosystem that
+typically relies on #f signal.
+
+#+begin_src racket
+  (? undefined)
+  ;; =>
+  #f
+
+  (? undefined v)
+  ;; =>
+  v
+
+  (? (not undefined))
+  ;; =>
+  (not undefined)
 #+end_src
 
 *** DONE default <get> metamethod semantics
@@ -692,6 +776,15 @@ metamethod doing necessary checks!
 
 ** . : .. :: syntax
 
+*** TODO consider providing alternative #%: implementations
+
+problem with checking for :key 'key and "key" is massive overhead. We basically
+traverse the entire metachain for each one of them. I guess maybe I ought to limit
+to just :key by default but also expose alternative versions #%:
+- #%:string
+- #%:symbol
+- #%:all - checks everything
+
 *** DONE consider ditching . syntax in tables
 CLOSED: [2019-06-24 Mon 12:07] SCHEDULED: <2019-06-24 Mon>
 - State "DONE"       from "STARTED"    [2019-06-24 Mon 12:07] \\
@@ -758,9 +851,11 @@ something we can pass around?
 
 and for completeness impl the same for .. and ::
 
-*** IDEA t.k? t:k?
+*** CANCELLED t.k? t:k?
 CLOSED: [2019-06-11 Tue 13:06]
 
+- State "CANCELLED"  from "IDEA"       [2019-06-25 Tue 07:06] \\
+  stupid idea
 Shorthand syntax that potentially returns undefined or #f (to better interface
 with Racket). Possible checks:
 - unless (table? t) return undefined
@@ -770,9 +865,11 @@ Basically the idea is to where it makes sense to get back the nil behavior of
 sorts. Maybe even have: get?
 - check that (table? t) else return undefined.
 
-*** IDEA t.k! t:k!
+*** CANCELLED t.k! t:k!
 CLOSED: [2019-06-11 Tue 13:48]
 
+- State "CANCELLED"  from "IDEA"       [2019-06-25 Tue 07:08] \\
+  stupid idea
 This one is probably too crazy, but maybe a fun macro exercise. Let these
 automatically bind the looked up value to t.k and t:k respectively, so that the
 next lookup simply retrieves the value without going through get. Challenge here
@@ -846,7 +943,6 @@ CLOSED: [2019-06-10 Mon 11:38]
 - State "DONE"       from "TODO"       [2019-06-10 Mon 11:38] \\
   For now we rely of Racket struct-info to reflect table constructor procedure.
 *** TODO Implement match expander for tables
-SCHEDULED: <2019-06-24 Mon>
 
 basically extend, move and rename my ht, ht* expanders from prelude to tables.rkt.
 
@@ -1193,7 +1289,6 @@ semantics for simple method lookup and precedence.
 CLOSED: [2019-06-10 Mon 13:40]
 
 *** TODO semantics of using table as a #:kw trait?
-SCHEDULED: <2019-06-24 Mon>
 
 presently #:kw trait can be either a table or a procedure. When a table its
 <setmeta> metamethod is called as the last ~add-traits~ step inside the
@@ -1647,7 +1742,7 @@ Here's how it might work:
 
 Could we pre-sort registered method values by implication?
 
-** Reflection
+** TODO Reflection
 
 Becomes really important and needs to permeate every design decision. What we have
 is an extensive graph or mesh of tables, which the user may need to observe to
