@@ -366,6 +366,12 @@
 ;;* get ---------------------------------------------------------- *;;
 
 
+;; TODO IMO this is where top, self (or this) ought to be bound and
+;; propagated. Fix point or lazy values maybe easiest to explicitly
+;; wrap a-la {:k (delay (top this) compute value)} which is merely a
+;; function or itself a table. When get arrives at delayed value it
+;; forces it while passing the top-most table as well as table where
+;; key's been found to to delay (just a lambda of two parameters).
 (define (get t k)
   (if (dict-has-key? t k)
       (dict-ref t k)
@@ -375,6 +381,10 @@
         (cond
           ((table? metamethod) (get metamethod k))
           ((procedure? metamethod) (metamethod t k))
+          ;; TODO ^^^ (matmethod t k) has t bound to "this" i.e. table
+          ;; with :<get> metamethod - not necessarily top-most table.
+          ;; Mistake when :<get> is found further down the chain?
+          ;; Ought to propagate both "top" and "this".
           ((undefined? metamethod) (if (table? mt) (get mt k) undefined))
           (else (raise-argument-error '<get> "table or procedure" metamethod))))))
 

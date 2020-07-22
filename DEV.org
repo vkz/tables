@@ -26,6 +26,18 @@ candidates are setters, converters (as), printers, getters, etc (see Swindle's
   ;; where <string> is bound to string-metatable
 #+end_src
 
+** IDEA why have generic methods alongside tables?
+  [2019-06-18 Tue]
+
+Here's one reason. Suppose we have a metachain where some metatables implement
+(and override) :method. What if I want every such method invocation to log-debug
+something? Without generics i.e (defgeneric (method self) (self:method)) I'd have
+to add log-debug to every :method implementation - that'd be annoying.
+
+I wonder if there is a way to achieve the same without generics but with
+prototypes alone? Perhaps have absolutely every method defined on the table to
+inherit from <method> and call it before method body passing self as argument?
+
 ** TODO Document tables.rkt
 
 *** TODO README.org for tables.rkt
@@ -46,11 +58,6 @@ candidates are setters, converters (as), printers, getters, etc (see Swindle's
 Since this basically require tweaking #%: a little, this is an interesting
 test-case for my indirection with #%: i.e. implement this feature by providing
 extended version of #%: e.g. in fcgi.rkt.
-
-** TODO Release tables.rkt
-DEADLINE: <2019-09-14 Sat>
-
-announce on list
 
 ** DONE #lang racket/tables racket/base/tables
 CLOSED: [2019-06-23 Sun 14:01] SCHEDULED: <2019-06-23 Sun>
@@ -97,6 +104,70 @@ CLOCK: [2019-05-30 Thu 15:08]--[2019-05-30 Thu 15:09] =>  0:01
 
 to serve as "raw" operations - the kind that only works on the main contained and
 is oblivious to metatables and inheritance. Think ~rawget~ and ~rawset~ in Lua.
+
+** CANCELLED Port tests for lua.rkt to tables.rkt
+CLOSED: [2019-06-11 Tue 11:10]
+- State "CANCELLED"  from "TODO"       [2019-06-11 Tue 11:10] \\
+  Too lazy to do it. IMO between <spec> and <tables> I have enough examples for now.
+  [2019-06-04 Tue]
+
+** DONE Define equality for tables
+CLOSED: [2019-06-02 Sun 10:10]
+- State "DONE"       from "STARTED"    [2019-06-02 Sun 10:10] \\
+  We basically punt on the default equal? by making table struct #:transparent. I
+  think this perfectly fine for now, but we may want to revisit and maybe implement
+  our own custom gen:equal+hash if there're perf bottlenecks or table semantics
+  warrant it.
+- State "STARTED"    from "TODO"       [2019-06-02 Sun 09:53]
+:LOGBOOK:
+CLOCK: [2019-06-02 Sun 09:53]--[2019-06-02 Sun 10:10] =>  0:17
+:END:
+  [2019-06-01 Sat]
+
+See [[file:~/Code/racket/racket/doc/reference/booleans.html?q=prop%253Ahash#%2528def._%2528%2528lib._racket%252Fprivate%252Fbase..rkt%2529._gen~3aequal%252Bhash%2529%2529][gen:equal+hash]] interface
+
+** DONE Separate #<undefined> aware boolean forms
+CLOSED: [2019-05-31 Fri 11:22]
+- State "DONE"       from "STARTED"    [2019-05-31 Fri 11:22]
+- State "STARTED"    from "TODO"       [2019-05-31 Fri 11:00]
+:LOGBOOK:
+CLOCK: [2019-05-31 Fri 11:14]--[2019-05-31 Fri 11:21] =>  0:07
+:END:
+  [2019-05-31 Fri]
+
+Replacing default Racket forms if, when, or, and, some etc with my own turned out to be
+dangerous. If you accidentally replace undefined aware forms with Racket's default you
+get baffling behavior when suddenly undefined is treated as truthy because those forms
+aren't what you think they are. Thinking that maybe I should keep them separate:
+- Racket: if, when, or, and, etc;
+- Prelude: if?, when?, or?, and?, etc.
+
+** DONE Add :tag syntax to tables
+CLOSED: [2019-05-31 Fri 10:53]
+- State "DONE"       from "STARTED"    [2019-05-31 Fri 10:53] \\
+  Implemented :tags. Turns out you can redefine #%top (and other kernel primitives)
+  in the same file and use them.
+- State "STARTED"    from "TODO"       [2019-05-31 Fri 09:41] \\
+  Want to check if it is possible to use #%top in the same file it is defined, so
+  that I could use :tags in tables.rkt. I seriously doubt, that's possible though.
+:LOGBOOK:
+CLOCK: [2019-05-31 Fri 09:41]--[2019-05-31 Fri 10:53] =>  1:12
+:END:
+  [2019-05-30 Thu]
+
+** DONE disallow undefined values in dict-set!
+CLOSED: [2019-06-04 Tue 13:07]
+- State "DONE"       from "TODO"       [2019-06-04 Tue 13:07] \\
+  Implemented as part of <set> metamethod experiment. In fact <set> relies on
+  dict-set! disallowing undefined values.
+  [2019-06-04 Tue]
+
+** DONE Parse mt, #:kw traits, table entries in #%app
+CLOSED: [2019-06-10 Mon 13:06]
+- State "DONE"       from "IDEA"       [2019-06-25 Tue 07:04]
+  [2019-06-07 Fri]
+
+then pass those parsed to #%table. That would simplify encoding custom #%table.
 
 ** Basic metatable semantics
 
@@ -1766,6 +1837,17 @@ you specify custom queries. In fact this may mean that we may need both SMT and
 
 Swindle offers one such implementation but in terms of classes, obviously. This
 must include built-in Racket types and structs else it won't have much use.
+
+*** TODO (get obj) or (table obj)
+
+Semantics:
+
+Always returns a table:
+- built in types e.g. numerics are wrapped in relevant tables,
+- tables are returned as is.
+
+Assuming =get= (=table=) are bound to (immutable) table we could even keep mapping
+from type to table-wrap right there to be easily altered by the user.
 
 *** TODO Ground default hierarchy with base <table>
 
