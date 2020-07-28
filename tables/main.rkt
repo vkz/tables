@@ -12,7 +12,7 @@
 
 
 ;; (require (only-in prelude ht get: set:))
-(require (only-in (file "/Users/russki/Code/prelude/prelude/prelude.rkt") ht get: set:))
+(require (only-in (file "/Users/russki/Code/prelude/prelude/prelude.rkt") ht get: set: comment example))
 ;; TODO Temporary fix to avoid moving ht constructor and accessors
 ;; from prelude
 
@@ -442,6 +442,160 @@
           ((undefined? metamethod) (if (table? mt) (get mt k #:top top) undefined))
           (else (raise-argument-error '<get> "table or procedure" metamethod))))))
 
+(define (in msg)
+  (displayln msg)
+  (sleep 1))
+
+(define (gett t k #:top [top t] #:this [this t] #:next [next #f])
+  ;; TODO is it possible to detect when we go into infinite loop?
+  ;; Somehow keep track of t => k invocation? Part of provenance
+  ;; tracking? I probably can't merrily use tables with fix entries as
+  ;; hash keys?
+  (if (dict-has-key? t k)
+      (let ((v (dict-ref t k)))
+        (if (fix-entry? v)
+            (let ((fixed (v top this next)))
+              (dict-set! t k fixed)
+              ;; TODO instead of replacing key I could
+              ;; set-fix-entry-value! like chaching
+              fixed)
+            v))
+      (let ((mt (table-meta t))
+            ;; we rely on meta-dict-ref returning undefined when mt is not a table
+            (metamethod (meta-dict-ref t :<get>)))
+        (cond
+          ((table? metamethod)  (in "<get> table") (gett metamethod k #:top top #:this metamethod #:next next))
+          ((procedure? metamethod) (in "<get> procedure") (metamethod t k))
+          ((undefined? metamethod) (if (table? mt)
+                                       (begin
+                                         (in "<get> undefined => meta")
+                                         (gett mt k #:top top #:this mt #:next next))
+                                       undefined))
+          (else (raise-argument-error '<get> "table or procedure" metamethod))))))
+
+(struct fix-entry (lambda)
+  #:transparent
+  #:property prop:procedure (struct-field-index lambda))
+
+(define-syntax (fix stx)
+  (syntax-parse stx
+    ((_ body:expr ...)
+     #:with top (datum->syntax stx 'top)
+     #:with this (datum->syntax stx 'this)
+     #:with next (datum->syntax stx 'next)
+     #:with l (syntax/loc stx (lambda (top this next) body ...))
+     (syntax/loc stx
+       (fix-entry l)))))
+
+(example
+ ((fix (~a (get top :a) "b")) (ht (:a "a")) #f #f)
+ ((fix-entry (λ (top this next) (~a (get top :a) "b")))
+  (ht (:a "a")) #f #f))
+
+(module+ ex
+  (require rackunit)
+  (define t {(:a "a")
+             (:b (fix (~a (gett top :a) "b")))
+             (:fix (fix (~a
+                         (gett top :b)
+                         (gett this :c)
+                         (gett this :d))))
+             (:c "c")
+             (:d "d")})
+
+  (check-true (fix-entry? (dict-ref t :b)))
+
+  (check-equal? (gett t :a) "a")
+  (check-equal? (gett t :fix) "abcd")
+  (check-false (fix-entry? (dict-ref t :b)))
+  (check-equal? (dict-ref t :b) "ab"))
+
+(module+ ex
+
+  (define m {(:b "B")
+             (:c (fix (~a
+                       (gett top :a)
+                       (gett top :b)
+                       (gett this :b)
+                       "c"
+                       (gett top :d))))
+             (:d "d")})
+
+  (define tt {m
+              (:a "a")
+              (:b "b")})
+
+  (check-pred fix-entry? (meta-dict-ref tt :c))
+  (check-equal? (gett tt :a) "a")
+  (check-equal? (gett tt :c) "abBcd")
+  (check-false (fix-entry? (meta-dict-ref tt :c)))
+  (check-equal? (meta-dict-ref tt :c) "abBcd"))
+
+
+(example
+ (define m {(:a "a")})
+ (define mm {m
+             (:a (fix (~a (next)
+                          (get top :b)
+                          (get this :b))))
+             (:b "b")})
+ (define t {mm})
+
+ (check-pred undefined? (dict-ref t :a))
+ (check-pred fix? (meta-dict-ref t :a))
+ (check-equal? (get t :b) "b")
+ (check-equal? (get t :a) "abb")
+ (check-equal? (meta-dict-ref t :a) "abb"))
+
+(comment
+ ;; on constructors
+ {pledge (:sum  42)
+         (:to   lena)
+         (:from vlad)}
+
+ {(:sum  42)
+  (:to   lena)
+  (:from vlad)
+  #:isa pledge}
+
+ {(:sum  42)
+  (:to   lena)
+  (:from vlad)
+  #:meta pledge})
+
+(comment
+ ;; fix in nested tables rather than implicit meta chain
+ ;; not clear what (next) should refer to:
+ ;; - this meta?
+ ;; - top meta?
+ (define ttt
+   {(:b "B")
+    (:c {(:fix (fix (~a
+                     (get top :a)
+                     (get top :b)
+                     (get this :b)
+                     (get this :c))))})
+    (:c "c")})
+
+ (get t :c :fix)
+ ;; =>
+ (~> t
+     #:top t
+     #:this t
+     (get :c)
+     #:top t
+     #:this ~
+     (get :fix))
+
+ ;; or
+
+ (define v (get t :c #:top ttt #:this ttt))
+ (if (more-keys)
+     (let ((tv (get v)))
+       (if (table? tv)
+           (get tv (next-key) #:top top #:this tv)
+           (error "expected a table")))
+     v))
 
 ;;* isa? --------------------------------------------------------- *;;
 
