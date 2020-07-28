@@ -26,6 +26,19 @@ candidates are setters, converters (as), printers, getters, etc (see Swindle's
   ;; where <string> is bound to string-metatable
 #+end_src
 
+** TODO Expansion perf
+
+Atm table appear to take way too long to compile. Macro expansion of main.rkt
+takes more than 4sec. Makes it painful to work on tables but become a real
+nuisance for users of the library.
+
+Simple things to look at:
+- time raco expand main.rkt,
+- size of the expansion,
+- raco macro-profiler main.rkt
+  see [[https://www.google.com/url?q=https%253A%252F%252Fdocs.racket-lang.org%252Fmacro-debugger%252Findex.html%2523(part._.Macro_.Profiler)&sa=D&sntz=1&usg=AFQjCNGGXjEquqUCrTPIxcrc8i06gZUTvQ][macro profiler]] and Ryan's [[http://www.google.com/url?q=http%253A%252F%252Fwww.ccs.neu.edu%252Fhome%252Fryanc%252Ftalks%252Fracket18-sugar.pdf&sa=D&sntz=1&usg=AFQjCNHgHXk1HJQJpuHwkDW6QFHgeuYG0A][Cost of Sugar]] presentation from RacketCon,
+- cost of keeping test modules alongside the code.
+
 ** IDEA why have generic methods alongside tables?
   [2019-06-18 Tue]
 

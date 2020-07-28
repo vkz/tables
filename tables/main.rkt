@@ -11,7 +11,10 @@
                   [#%app racket/#%app]))
 
 
-(require (only-in prelude ht get: set:))
+;; (require (only-in prelude ht get: set:))
+(require (only-in (file "/Users/russki/Code/prelude/prelude/prelude.rkt") ht get: set:))
+;; TODO Temporary fix to avoid moving ht constructor and accessors
+;; from prelude
 
 
 (provide (rename-out [#%top table-#%top] [#%app table-#%app]
@@ -35,7 +38,51 @@
 
 (module+ test
   (require rackunit)
-  (require prelude/testing))
+
+  ;; NOTE Convenience macros because Because rackunit checks return
+  ;; (void). I fail to see the benefit of this decision. So we define
+  ;; a simple no-exn check that actually returns a value. Should
+  ;; report correct loc if exn is ever thrown.
+
+  (define (syntax->location stx)
+    (list (syntax-source stx)
+          (syntax-line stx)
+          (syntax-column stx)
+          (syntax-position stx)
+          (syntax-span stx)))
+  (define (list/if . vs) (filter values vs))
+  (define-check (set/check! box v)
+    (set-box! box v))
+
+  (define-syntax (checked stx)
+    (syntax-parse stx
+      [(_ e:expr msg)
+       (quasisyntax
+        (begin
+          (when msg
+            (unless (string? msg)
+              (raise-argument-error
+               (string->symbol "msg") "string? or #f" msg)))
+          (with-default-check-info*
+            (list/if (make-check-name 'checked)
+                     (and msg (make-check-info 'checked-message msg))
+                     (make-check-location
+                      (syntax->location #'e))
+                     (make-check-expression 'e)
+                     (make-check-params 'e))
+            (thunk
+             (let ((result (box undefined)))
+               ;; NOTE the only reason we wrap e in check is to have rackunit
+               ;; exception handlers installed. We don't wrap in any predefined
+               ;; checks cause they gobble up errortraces. Rackunit needs to be
+               ;; retired, darn.
+               (set/check! result e)
+               (unbox result))))))]
+      [(_ e:expr)
+       #'(checked e #f)]))
+
+  (define-simple-macro (define/checked name:id e:expr)
+    (define name (checked e (format "failed to define ~a" 'name)))))
 
 
 (begin-for-syntax
@@ -366,26 +413,33 @@
 ;;* get ---------------------------------------------------------- *;;
 
 
-;; TODO IMO this is where top, self (or this) ought to be bound and
-;; propagated. Fix point or lazy values maybe easiest to explicitly
-;; wrap a-la {:k (delay (top this) compute value)} which is merely a
-;; function or itself a table. When get arrives at delayed value it
-;; forces it while passing the top-most table as well as table where
-;; key's been found to to delay (just a lambda of two parameters).
-(define (get t k)
+;; TODO IMO this is where top, self (or this) and next ought to be
+;; bound and propagated. Fix point or lazy values maybe easiest to
+;; explicitly wrap a-la {:k (delay (top this) compute value)} which is
+;; merely a function or itself a table. When get arrives at delayed
+;; value it forces it while passing the top-most table as well as
+;; table where key's been found to to delay (just a lambda of two
+;; parameters).
+(define (get t k #:top [top t])
   (if (dict-has-key? t k)
       (dict-ref t k)
       (let ((mt (table-meta t))
             ;; we rely on meta-dict-ref returning undefined when mt is not a table
             (metamethod (meta-dict-ref t :<get>)))
         (cond
-          ((table? metamethod) (get metamethod k))
+          ((table? metamethod) (get metamethod k #:top top))
           ((procedure? metamethod) (metamethod t k))
-          ;; TODO ^^^ (matmethod t k) has t bound to "this" i.e. table
+          ;; ^^^
+          ;;
+          ;; TODO (matmethod t k) has t bound to "this" i.e. table
           ;; with :<get> metamethod - not necessarily top-most table.
           ;; Mistake when :<get> is found further down the chain?
-          ;; Ought to propagate both "top" and "this".
-          ((undefined? metamethod) (if (table? mt) (get mt k) undefined))
+          ;; Ought to propagate both "top" and "this". This is due to
+          ;; the first and the following clauses that propagate mt
+          ;; instead of t.
+          ;;
+          ;; vvv
+          ((undefined? metamethod) (if (table? mt) (get mt k #:top top) undefined))
           (else (raise-argument-error '<get> "table or procedure" metamethod))))))
 
 
@@ -545,6 +599,9 @@
                 (~seq kw:keyword opt:expr))))
 
 
+  ;; TODO to switch to Clj like table syntax without extra parens
+  ;; change this to define-splicing-syntax-class and (~seq k v) pat
+  ;; like the above =option= syntax class
   (define-syntax-class table-entry
     #:attributes (key value)
     (pattern
@@ -961,20 +1018,20 @@
 (module+ test
   (test-case "define/table"
     (define t {})
-    (checked (define/table t:a 1))
-    (checked (define/table t:b 2))
-    (checked (define/table (t:foo a) a))
+    (define/table t:a 1)
+    (define/table t:b 2)
+    (define/table (t:foo a) a)
     (check-eq? (t:foo 1) 1)
-    (checked (define/table ((t:bar a) b) (+ a b)))
+    (define/table ((t:bar a) b) (+ a b))
     (check-eq? ((t:bar 1) 2) 3)
-    (checked (define/table (t:baz a #:b (b 2)) (+ a b)))
+    (define/table (t:baz a #:b (b 2)) (+ a b))
     (check-eq? (t:baz 1) 3)
     (check-eq? (t:baz 1 #:b 0) 1)
-    (checked (define/table (t::get k) (get self k)))
+    (define/table (t::get k) (get self k))
     (check-eq? (t::get :a) 1)
-    (checked (define/table ((t::get+ k1) k2) (+ (self::get k1) (self::get k2))))
+    (define/table ((t::get+ k1) k2) (+ (self::get k1) (self::get k2)))
     (check-eq? ((t::get+ :a) :b) 3)
-    (checked (define/table (t::get* . keys) (apply + (map (curry get self) keys))))
+    (define/table (t::get* . keys) (apply + (map (curry get self) keys)))
     (check-eq? (t::get* :a :b) 3)
     (define/table a 1)
     (check-eq? a 1)))
