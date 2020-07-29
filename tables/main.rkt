@@ -412,29 +412,34 @@
 
 ;;* get ---------------------------------------------------------- *;;
 
-(define (get t k #:top [top t])
-  (if (dict-has-key? t k)
-      (dict-ref t k)
-      (let ((mt (table-meta t))
-            ;; we rely on meta-dict-ref returning undefined when mt is not a table
-            (metamethod (meta-dict-ref t :<get>)))
-        (cond
-          ((table? metamethod) (get metamethod k #:top top))
-          ((procedure? metamethod) (metamethod t k))
-          ((undefined? metamethod) (if (table? mt) (get mt k #:top top) undefined))
-          (else
-           (raise-argument-error '<get> "table or procedure" metamethod))))))
+;; old get without support for top, this, next
+#;(define (get t k #:top [top t])
+    (if (dict-has-key? t k)
+        (dict-ref t k)
+        (let ((mt (table-meta t))
+              ;; we rely on meta-dict-ref returning undefined when mt is not a table
+              (metamethod (meta-dict-ref t :<get>)))
+          (cond
+            ((table? metamethod) (get metamethod k #:top top))
+            ((procedure? metamethod) (metamethod t k))
+            ((undefined? metamethod) (if (table? mt) (get mt k #:top top) undefined))
+            (else
+             (raise-argument-error '<get> "table or procedure" metamethod))))))
 
 (define (in msg)
-  (displayln msg)
+  ;; (displayln msg)
   ;; (sleep 1)
   (void))
 
-(define (gett t k #:top [top t] #:this [this t] #:next [next (thunk (error "no next"))])
+(define (get t k #:top [top t] #:this [this t] #:next [next (thunk (error "no next"))])
   ;; TODO is it possible to detect when we go into infinite loop?
   ;; Somehow keep track of t => k invocation? Part of provenance
   ;; tracking? I probably can't merrily use tables with fix entries as
   ;; hash keys?
+
+  ;; TODO we cannot assume t is a table. Best perform (get t) before the following? Assuming get
+  ;; with a single argument wraps native types in appropriate table. Or contract t to implement a
+  ;; dictionary interface and dict-ref before trying to get meta?
   (let ((mt (table-meta t))
         ;; we rely on meta-dict-ref returning undefined when mt is not a table
         (metamethod (meta-dict-ref t :<get>)))
@@ -444,7 +449,7 @@
           (begin
             (in "metatable => recurse")
             ;; should next be #f (we start over) or error?
-            (gett mt k #:top top #:this mt #:next (thunk (error "no next"))))
+            (get mt k #:top top #:this mt #:next (thunk (error "no next"))))
           undefined))
 
     (define (delegate-to-<get>)
@@ -455,7 +460,7 @@
          (in "<get> table => recurse")
          ;; NOTE we could instead delegate to the next clause i.e. <get> procedure, but with tables
          ;; doubling as procedures this may be more confusing than its worth, so we delegate to <mt>
-         (gett metamethod k #:top top #:this metamethod #:next delegate-to-<mt>))
+         (get metamethod k #:top top #:this metamethod #:next delegate-to-<mt>))
 
 
         ;; III: if <get> metamethod is a procedure invoke it
@@ -490,6 +495,7 @@
       (else
        (delegate-to-<get>)))))
 
+
 (struct fix-entry (lambda)
   ;; lambda must be a procedure of 3 arguments e.g. (λ (top this next) body)
   #:transparent
@@ -508,13 +514,13 @@
 
 (module+ test
   (test-case "fix struct and macro"
-    (check-equal? ((fix-entry (λ (top this next) (~a (get top :a) "b")))
+    (check-equal? ((fix-entry (λ (top this next) (~a (dict-ref top :a) "b")))
                    #;top (ht (:a "a"))
                    #;this #f
                    #;next #f)
                   "ab")
 
-    (check-equal? ((fix (~a (get top :a) "b"))
+    (check-equal? ((fix (~a (dict-ref top :a) "b"))
                    #;top (ht (:a "a"))
                    #;this #f
                    #;next #f)
@@ -524,17 +530,17 @@
 
   (test-case "fix: compute with top and this in table"
     (define/checked t {(:a "a")
-                       (:b (fix (~a (gett top :a) "b")))
+                       (:b (fix (~a (get top :a) "b")))
                        (:fix (fix (~a
-                                   (gett top :b)
-                                   (gett this :c)
-                                   (gett this :d))))
+                                   (get top :b)
+                                   (get this :c)
+                                   (get this :d))))
                        (:c "c")
                        (:d "d")})
     ;; value has been delayed
     (check-true (fix-entry? (dict-ref t :b)))
-    (check-equal? (gett t :a) "a")
-    (check-equal? (gett t :fix) "abcd")
+    (check-equal? (get t :a) "a")
+    (check-equal? (get t :fix) "abcd")
     ;; value has been forced and persisted
     (check-false (fix-entry? (dict-ref t :b)))
     (check-equal? (dict-ref t :b) "ab"))
@@ -542,18 +548,18 @@
   (test-case "fix: compute with top and this in metatable"
     (define/checked m {(:b "B")
                        (:c (fix (~a
-                                 (gett top :a)
-                                 (gett top :b)
-                                 (gett this :b)
+                                 (get top :a)
+                                 (get top :b)
+                                 (get this :b)
                                  "c"
-                                 (gett top :d))))
+                                 (get top :d))))
                        (:d "d")})
     (define/checked tt {m
                         (:a "a")
                         (:b "b")})
     (check-pred fix-entry? (meta-dict-ref tt :c))
-    (check-equal? (gett tt :a) "a")
-    (check-equal? (gett tt :c) "abBcd")
+    (check-equal? (get tt :a) "a")
+    (check-equal? (get tt :c) "abBcd")
     (check-false (fix-entry? (meta-dict-ref tt :c)))
     (check-equal? (meta-dict-ref tt :c) "abBcd"))
 
@@ -562,31 +568,31 @@
     (define/checked m {(:a "a")})
     (define/checked mm {m
                         (:a (fix (~a (next)
-                                     (gett top :b)
-                                     (gett this :b))))
+                                     (get top :b)
+                                     (get this :b))))
                         (:b "b")})
     (define/checked t {mm})
 
     (check-pred undefined? (dict-ref t :a))
     (check-pred fix-entry? (meta-dict-ref t :a))
-    (check-equal? (gett t :b) "b")
-    (check-equal? (gett t :a) "abb")
+    (check-equal? (get t :b) "b")
+    (check-equal? (get t :a) "abb")
     (check-equal? (meta-dict-ref t :a) "abb"))
 
   (test-case "fix: compute with top, this, next and <get> table"
     (define mget {(:prefix "0")})
     (define <get> {mget
-                   (:a (fix (~a (gett this :prefix) "a")))
-                   (:b (fix (~a (gett this :prefix) "b")))
-                   (:c (fix (~a (gett this :prefix) "c")))})
+                   (:a (fix (~a (get this :prefix) "a")))
+                   (:b (fix (~a (get this :prefix) "b")))
+                   (:c (fix (~a (get this :prefix) "c")))})
     (define mt {(:<get> <get>)})
     (define t {mt (:a (fix (next)))})
     (check-pred fix-entry? (dict-ref t :a))
     (check-pred undefined? (dict-ref t :b))
     (check-pred undefined? (dict-ref t :c))
-    (check-equal? (gett t :a) "0a")
-    (check-equal? (gett t :b) "0b")
-    (check-equal? (gett t :c) "0c")
+    (check-equal? (get t :a) "0a")
+    (check-equal? (get t :b) "0b")
+    (check-equal? (get t :c) "0c")
     (check-equal? (dict-ref t :a) "0a")
     (check-pred undefined? (dict-ref t :b))
     (check-pred undefined? (dict-ref t :c)))
@@ -604,9 +610,9 @@
     (define t {mt (:a "a")})
     (check-pred undefined? (dict-ref t :b))
     (check-pred undefined? (dict-ref t :c))
-    (check-equal? (gett t :a) "a")
-    (check-equal? (gett t :b) "0b")
-    (check-equal? (gett t :c) "0c")
+    (check-equal? (get t :a) "a")
+    (check-equal? (get t :b) "0b")
+    (check-equal? (get t :c) "0c")
     (check-equal? (dict-ref t :b) "0b")
     (check-equal? (dict-ref t :c) "0c")))
 
@@ -685,7 +691,7 @@
   (define/checked mt (make-table (ht (:b 2)) undefined))
   (define/checked t (make-table #;t (ht (:a 1)) #;mt mt))
   (define/checked tt (make-table #;t (ht) #;mt t))
-  (define/checked t<get>proc (make-table #;t (ht) #;mt (make-table (ht (:<get> (λ (_ key) (get t key)))) undefined)))
+  (define/checked t<get>proc (make-table #;t (ht) #;mt (make-table (ht (:<get> (λ (_ key #:top _top #:this _this #:next _next) (get t key)))) undefined)))
   (define/checked t<get>table (make-table #;t (ht) #;mt (make-table (ht (:<get> t)) undefined)))
 
   (test-case "get: when mt is a table"
@@ -1263,7 +1269,7 @@
         (isa? t mt))))
 
 
-(define/table (<tables>::<get> k)
+(define/table (<tables>::<get> k #:top [top #f] #:this [this #f] #:next (error "no next"))
   ;; TODO for now order is induced by symbolic keys, at least until we start using
   ;; insertion ordered hash-maps for table contents. Alternative would be to store
   ;; parent tables in a list under e.g. :tables
