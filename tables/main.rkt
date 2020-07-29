@@ -427,7 +427,8 @@
 
 (define (in msg)
   (displayln msg)
-  (sleep 1))
+  ;; (sleep 1)
+  (void))
 
 (define (gett t k #:top [top t] #:this [this t] #:next [next (thunk (error "no next"))])
   ;; TODO is it possible to detect when we go into infinite loop?
@@ -437,55 +438,57 @@
   (let ((mt (table-meta t))
         ;; we rely on meta-dict-ref returning undefined when mt is not a table
         (metamethod (meta-dict-ref t :<get>)))
-    ;; NOTE effectively this is just a (cond clause1 clause2 ...) manually unrolled into roughly CPS
-    ;; so that each previous clause may fall through to the following clauses and capture the
-    ;; result. This lets us delegate key-value lookup further down the chain and use the result to
-    ;; compute the final value that corresponds to the key being looked up. Effectively inheritance.
-    (define clause1
+
+    (define (delegate-to-<mt>)
+      (if (table? mt)
+          (begin
+            (in "metatable => recurse")
+            ;; should next be #f (we start over) or error?
+            (gett mt k #:top top #:this mt #:next (thunk (error "no next"))))
+          undefined))
+
+    (define (delegate-to-<get>)
+      (cond
+
+        ;; II: if <get> metamethod is a table recurse there
+        ((table? metamethod)
+         (in "<get> table => recurse")
+         ;; NOTE we could instead delegate to the next clause i.e. <get> procedure, but with tables
+         ;; doubling as procedures this may be more confusing than its worth, so we delegate to <mt>
+         (gett metamethod k #:top top #:this metamethod #:next delegate-to-<mt>))
+
+
+        ;; III: if <get> metamethod is a procedure invoke it
+        ((procedure? metamethod)
+         (in "<get> procedure => invoke")
+         (metamethod t k #:top top #:this this #:next delegate-to-<mt>))
+
+        ;; IV: if no <get> metamethod recurse into metatable
+        ((undefined? metamethod)
+         (in "<get> undefined => metatable")
+         (delegate-to-<mt>))
+
+        (else
+         ;; V: <get> is present but fails contract
+         (raise-argument-error '<get> "table or procedure" metamethod))))
+
+    (cond
+
       ;; I: check if key is present in the table itself
-      (thunk
-       (cond
-         ((dict-has-key? t k)
-          ;; (in "table => value")
-          (let ((v (dict-ref t k)))
-            (if (fix-entry? v)
-                (let ((fixed (v top this clause2)))
-                  (dict-set! t k fixed)
-                  ;; TODO instead of replacing key I could
-                  ;; set-fix-entry-value! like caching
-                  fixed)
-                v)))
-         (else (clause2)))))
-    (define clause2
-      ;; II: if <get> metamethod is a table recurse there
-      (thunk
-       (cond
-         ((table? metamethod)
-          (in "<get> table => it")
-          (gett metamethod k #:top top #:this metamethod #:next clause3))
-         (else (clause3)))))
-    (define clause3
-      ;; III: if <get> metamethod is a procedure invoke it
-      (thunk
-       (cond
-         ((procedure? metamethod)
-          (in "<get> procedure => invoke")
-          (metamethod t k #:top top #:this this #:next clause4))
-         (else (clause4)))))
-    (define clause4
-      ;; IV: if no <get> metamethod recurse into metatable
-      (thunk
-       (cond
-         ((undefined? metamethod)
-          (if (table? mt)
-              (begin
-                (in "<get> undefined => metatable")
-                ;; should next be #f (we start over) or error?
-                (gett mt k #:top top #:this mt #:next (thunk (error "no next"))))
-              undefined))
-         (else (raise-argument-error '<get> "table or procedure" metamethod)))))
-    ;; Dispatch to "cond" clauses starting from the top I
-    (clause1)))
+      ((dict-has-key? t k)
+       ;; (in "table => value")
+       (let ((v (dict-ref t k)))
+         (if (fix-entry? v)
+             (let ((fixed (v top this delegate-to-<get>)))
+               (dict-set! t k fixed)
+               ;; TODO instead of replacing key I could
+               ;; set-fix-entry-value! like caching
+               fixed)
+             v)))
+
+      ;; II or III or IV or V
+      (else
+       (delegate-to-<get>)))))
 
 (struct fix-entry (lambda)
   ;; lambda must be a procedure of 3 arguments e.g. (λ (top this next) body)
@@ -570,81 +573,43 @@
     (check-equal? (gett t :a) "abb")
     (check-equal? (meta-dict-ref t :a) "abb"))
 
-  #;(test-case "fix: compute with top, this, next and <get> procedure"
-      (define mt {(:prefix "0")
-                  (:<get> (λ (t key #:top top #:this this #:next next)
-                            ;; compute with delegation
-                            (define v (~a (meta-dict-ref this :prefix) (next)))
-                            ;; cache result on the instance (not mt!)
-                            (dict-set! this key v)
-                            v))
-                  (:b "b")
-                  (:c "c")})
-      (define t {mt (:a "a")})
-      (check-pred undefined? (dict-ref t :b))
-      (check-pred undefined? (dict-ref t :c))
-      (check-equal? (gett t :a) "a")
-      (check-equal? (gett t :b) "0b")
-      (check-equal? (gett t :c) "0c")
-      (check-equal? (dict-ref t :b) "0b")
-      (check-equal? (dict-ref t :c) "0c"))
+  (test-case "fix: compute with top, this, next and <get> table"
+    (define mget {(:prefix "0")})
+    (define <get> {mget
+                   (:a (fix (~a (gett this :prefix) "a")))
+                   (:b (fix (~a (gett this :prefix) "b")))
+                   (:c (fix (~a (gett this :prefix) "c")))})
+    (define mt {(:<get> <get>)})
+    (define t {mt (:a (fix (next)))})
+    (check-pred fix-entry? (dict-ref t :a))
+    (check-pred undefined? (dict-ref t :b))
+    (check-pred undefined? (dict-ref t :c))
+    (check-equal? (gett t :a) "0a")
+    (check-equal? (gett t :b) "0b")
+    (check-equal? (gett t :c) "0c")
+    (check-equal? (dict-ref t :a) "0a")
+    (check-pred undefined? (dict-ref t :b))
+    (check-pred undefined? (dict-ref t :c)))
 
-  #;(test-case "fix: compute with top, this, next and <get> table"
-    (define/checked t<get>table (make-table #;t (ht) #;mt (make-table (ht (:<get> t)) undefined)))
-    (check-eq? (get t<get>table :a) 1)
-    (check-eq? (get t<get>table :b) 2)
-    (check-pred undefined? (get t<get>table :c))))
+  (test-case "fix: compute with top, this, next and <get> procedure"
+    (define mt {(:<get> (λ (t key #:top top #:this this #:next next)
+                          ;; compute with delegation
+                          (define v (~a (meta-dict-ref this :prefix) (next)))
+                          ;; cache result on the instance (not mt!)
+                          (dict-set! this key v)
+                          v))
+                (:prefix "0")
+                (:b "b")
+                (:c "c")})
+    (define t {mt (:a "a")})
+    (check-pred undefined? (dict-ref t :b))
+    (check-pred undefined? (dict-ref t :c))
+    (check-equal? (gett t :a) "a")
+    (check-equal? (gett t :b) "0b")
+    (check-equal? (gett t :c) "0c")
+    (check-equal? (dict-ref t :b) "0b")
+    (check-equal? (dict-ref t :c) "0c")))
 
-
-(comment
- ;; on constructors
- {pledge (:sum  42)
-         (:to   lena)
-         (:from vlad)}
-
- {(:sum  42)
-  (:to   lena)
-  (:from vlad)
-  #:isa pledge}
-
- {(:sum  42)
-  (:to   lena)
-  (:from vlad)
-  #:meta pledge})
-
-(comment
- ;; fix in nested tables rather than implicit meta chain
- ;; not clear what (next) should refer to:
- ;; - this meta?
- ;; - top meta?
- (define ttt
-   {(:b "B")
-    (:c {(:fix (fix (~a
-                     (get top :a)
-                     (get top :b)
-                     (get this :b)
-                     (get this :c))))})
-    (:c "c")})
-
- (get t :c :fix)
- ;; =>
- (~> t
-     #:top t
-     #:this t
-     (get :c)
-     #:top t
-     #:this ~
-     (get :fix))
-
- ;; or
-
- (define v (get t :c #:top ttt #:this ttt))
- (if (more-keys)
-     (let ((tv (get v)))
-       (if (table? tv)
-           (get tv (next-key) #:top top #:this tv)
-           (error "expected a table")))
-     v))
 
 ;;* isa? --------------------------------------------------------- *;;
 
@@ -772,6 +737,23 @@
 
 
 ;;* Constructors ------------------------------------------------- *;;
+
+
+(comment
+ ;; IDEA on constructors
+ {pledge (:sum  42)
+         (:to   lena)
+         (:from vlad)}
+
+ {(:sum  42)
+  (:to   lena)
+  (:from vlad)
+  #:isa pledge}
+
+ {(:sum  42)
+  (:to   lena)
+  (:from vlad)
+  #:meta pledge})
 
 
 (define <table> (make-table (ht) undefined))
@@ -1318,110 +1300,3 @@
 
 
 ;;* Experiments -------------------------------------------------- *;;
-
-
-(comment
-
- ;; TODO should I bother replacing manual continuation-passing style in gett with something like
- ;; kond below? Seems to work on simple examples but fails in gett. It is a cool macro problem.
- ;; Wonder if there's a simple solution that relies on call-with-composable-continuation
-
- (example
-  ;; idea
-  (kond
-   (c1 f1)
-   (c2 f2)
-   (c3 f3))
-  ;; =>
-  (let ((continue (thunk (void))))
-    (let ((continue (thunk
-                     (cond
-                       (c3 f3)
-                       (else (continue))))))
-      (let ((continue (thunk
-                       (cond
-                         (c2 f2)
-                         (else (continue))))))
-        (let ((continue (thunk
-                         (cond
-                           (c1 f1)
-                           (else (continue))))))
-          (continue))))))
-
-
- (define-for-syntax (donk #:continue continue clauses)
-   (match clauses
-     ((list clause)
-      (with-syntax ((clause clause))
-        #`(let ((continue (thunk
-                           (cond
-                             clause
-                             (else (#,continue))))))
-
-            (continue))))
-
-     ((list-rest clause clauses)
-      (with-syntax ((next-continue (datum->syntax (car clauses) 'continue))
-                    (continuations (donk #:continue #'continue clauses))
-                    (cond-expr  (syntax-parse clause
-                                  #:literals (else)
-                                  ((else e) #'(cond (else e)))
-                                  (clause #`(cond
-                                              clause
-                                              (else (#,continue)))))))
-        #`(let ((next-continue (thunk cond-expr)))
-            continuations)))))
-
- (define-syntax (kond stx)
-   (syntax-parse stx
-     ((_) #'(cond))
-     ((_ clause) #'(cond clause))
-     ((_ . clauses)
-      (let ((clauses (reverse (syntax->list #'clauses))))
-        (with-syntax ((continue (datum->syntax (car clauses) 'continue))
-                      (continuations (donk #:continue #'continue clauses)))
-          (syntax/loc stx
-            (let ((continue (thunk (void))))
-              continuations)))))))
-
- (example
-  (kond
-   (1 (+ 1 (continue)))
-   (2 2))
-
-  (kond
-   (1 (+ 1 (continue)))
-   (2 (+ 2 (continue)))
-   (3 3))
-
-  (kond
-   (1 (+ 1 (continue)))
-   (else 2)))
-
- (define (gett t k #:top [top t] #:this [this t] #:next [next (thunk (error "no next"))])
-   ;; TODO is it possible to detect when we go into infinite loop?
-   ;; Somehow keep track of t => k invocation? Part of provenance
-   ;; tracking? I probably can't merrily use tables with fix entries as
-   ;; hash keys?
-
-   (let ((mt (table-meta t))
-         ;; we rely on meta-dict-ref returning undefined when mt is not a table
-         (metamethod (meta-dict-ref t :<get>)))
-     (kond
-      ((dict-has-key? t k) (let ((v (dict-ref t k)))
-                             (if (fix-entry? v)
-                                 (let ((fixed (v top this continue)))
-                                   (dict-set! t k fixed)
-                                   ;; TODO instead of replacing key I could
-                                   ;; set-fix-entry-value! like caching
-                                   fixed)
-                                 v)))
-      ((table? metamethod)  (in "<get> table") (gett metamethod k #:top top #:this metamethod #:next continue))
-      ((procedure? metamethod) (in "<get> procedure") (metamethod t k #:top top #:this this #:next continue))
-      ((undefined? metamethod) (if (table? mt)
-                                   (begin
-                                     (in "<get> undefined => meta")
-                                     ;; should next be #f (we start over) or error?
-                                     (gett mt k #:top top #:this mt #:next (thunk (error "no next"))))
-                                   undefined))
-      (else (raise-argument-error '<get> "table or procedure" metamethod))))))
