@@ -412,14 +412,6 @@
 
 ;;* get ---------------------------------------------------------- *;;
 
-
-;; TODO IMO this is where top, self (or this) and next ought to be
-;; bound and propagated. Fix point or lazy values maybe easiest to
-;; explicitly wrap a-la {:k (delay (top this) compute value)} which is
-;; merely a function or itself a table. When get arrives at delayed
-;; value it forces it while passing the top-most table as well as
-;; table where key's been found to to delay (just a lambda of two
-;; parameters).
 (define (get t k #:top [top t])
   (if (dict-has-key? t k)
       (dict-ref t k)
@@ -429,18 +421,9 @@
         (cond
           ((table? metamethod) (get metamethod k #:top top))
           ((procedure? metamethod) (metamethod t k))
-          ;; ^^^
-          ;;
-          ;; TODO (matmethod t k) has t bound to "this" i.e. table
-          ;; with :<get> metamethod - not necessarily top-most table.
-          ;; Mistake when :<get> is found further down the chain?
-          ;; Ought to propagate both "top" and "this". This is due to
-          ;; the first and the following clauses that propagate mt
-          ;; instead of t.
-          ;;
-          ;; vvv
           ((undefined? metamethod) (if (table? mt) (get mt k #:top top) undefined))
-          (else (raise-argument-error '<get> "table or procedure" metamethod))))))
+          (else
+           (raise-argument-error '<get> "table or procedure" metamethod))))))
 
 (define (in msg)
   (displayln msg)
@@ -451,45 +434,66 @@
   ;; Somehow keep track of t => k invocation? Part of provenance
   ;; tracking? I probably can't merrily use tables with fix entries as
   ;; hash keys?
-
   (let ((mt (table-meta t))
         ;; we rely on meta-dict-ref returning undefined when mt is not a table
         (metamethod (meta-dict-ref t :<get>)))
-    (define d0 (thunk
-                (cond
-                  ((dict-has-key? t k) (let ((v (dict-ref t k)))
-                                         (if (fix-entry? v)
-                                             (let ((fixed (v top this d1)))
-                                               (dict-set! t k fixed)
-                                               ;; TODO instead of replacing key I could
-                                               ;; set-fix-entry-value! like caching
-                                               fixed)
-                                             v)))
-                  (else (d1)))))
-    (define d1 (thunk
-                (cond
-                  ((table? metamethod)  (in "<get> table") (gett metamethod k #:top top #:this metamethod #:next d2))
-                  (else (d2)))))
-    (define d2 (thunk
-                (cond
-                  ((procedure? metamethod) (in "<get> procedure") (metamethod t k #:top top #:this this #:next d3))
-                  (else (d3)))))
-    (define d3 (thunk
-                (cond
-                  ((undefined? metamethod) (if (table? mt)
-                                               (begin
-                                                 (in "<get> undefined => meta")
-                                                 ;; should next be #f (we start over) or error?
-                                                 (gett mt k #:top top #:this mt #:next (thunk (error "no next"))))
-                                               undefined))
-                  (else (raise-argument-error '<get> "table or procedure" metamethod)))))
-    (d0)))
+    ;; NOTE effectively this is just a (cond clause1 clause2 ...) manually unrolled into roughly CPS
+    ;; so that each previous clause may fall through to the following clauses and capture the
+    ;; result. This lets us delegate key-value lookup further down the chain and use the result to
+    ;; compute the final value that corresponds to the key being looked up. Effectively inheritance.
+    (define clause1
+      ;; I: check if key is present in the table itself
+      (thunk
+       (cond
+         ((dict-has-key? t k)
+          ;; (in "table => value")
+          (let ((v (dict-ref t k)))
+            (if (fix-entry? v)
+                (let ((fixed (v top this clause2)))
+                  (dict-set! t k fixed)
+                  ;; TODO instead of replacing key I could
+                  ;; set-fix-entry-value! like caching
+                  fixed)
+                v)))
+         (else (clause2)))))
+    (define clause2
+      ;; II: if <get> metamethod is a table recurse there
+      (thunk
+       (cond
+         ((table? metamethod)
+          (in "<get> table => it")
+          (gett metamethod k #:top top #:this metamethod #:next clause3))
+         (else (clause3)))))
+    (define clause3
+      ;; III: if <get> metamethod is a procedure invoke it
+      (thunk
+       (cond
+         ((procedure? metamethod)
+          (in "<get> procedure => invoke")
+          (metamethod t k #:top top #:this this #:next clause4))
+         (else (clause4)))))
+    (define clause4
+      ;; IV: if no <get> metamethod recurse into metatable
+      (thunk
+       (cond
+         ((undefined? metamethod)
+          (if (table? mt)
+              (begin
+                (in "<get> undefined => metatable")
+                ;; should next be #f (we start over) or error?
+                (gett mt k #:top top #:this mt #:next (thunk (error "no next"))))
+              undefined))
+         (else (raise-argument-error '<get> "table or procedure" metamethod)))))
+    ;; Dispatch to "cond" clauses starting from the top I
+    (clause1)))
 
 (struct fix-entry (lambda)
+  ;; lambda must be a procedure of 3 arguments e.g. (λ (top this next) body)
   #:transparent
   #:property prop:procedure (struct-field-index lambda))
 
 (define-syntax (fix stx)
+  ;; TODO allow custom top, this, next bindings via #:top, #:this, #:next keyword arguments
   (syntax-parse stx
     ((_ body:expr ...)
      #:with top (datum->syntax stx 'top)
@@ -499,65 +503,98 @@
      (syntax/loc stx
        (fix-entry l)))))
 
-(example
- ((fix (~a (get top :a) "b")) (ht (:a "a")) #f #f)
- ((fix-entry (λ (top this next) (~a (get top :a) "b")))
-  (ht (:a "a")) #f #f))
+(module+ test
+  (test-case "fix struct and macro"
+    (check-equal? ((fix-entry (λ (top this next) (~a (get top :a) "b")))
+                   #;top (ht (:a "a"))
+                   #;this #f
+                   #;next #f)
+                  "ab")
 
-(module+ ex
-  (require rackunit)
-  (define t {(:a "a")
-             (:b (fix (~a (gett top :a) "b")))
-             (:fix (fix (~a
-                         (gett top :b)
-                         (gett this :c)
-                         (gett this :d))))
-             (:c "c")
-             (:d "d")})
+    (check-equal? ((fix (~a (get top :a) "b"))
+                   #;top (ht (:a "a"))
+                   #;this #f
+                   #;next #f)
+                  "ab")))
 
-  (check-true (fix-entry? (dict-ref t :b)))
+(module+ test
 
-  (check-equal? (gett t :a) "a")
-  (check-equal? (gett t :fix) "abcd")
-  (check-false (fix-entry? (dict-ref t :b)))
-  (check-equal? (dict-ref t :b) "ab"))
+  (test-case "fix: compute with top and this in table"
+    (define/checked t {(:a "a")
+                       (:b (fix (~a (gett top :a) "b")))
+                       (:fix (fix (~a
+                                   (gett top :b)
+                                   (gett this :c)
+                                   (gett this :d))))
+                       (:c "c")
+                       (:d "d")})
+    ;; value has been delayed
+    (check-true (fix-entry? (dict-ref t :b)))
+    (check-equal? (gett t :a) "a")
+    (check-equal? (gett t :fix) "abcd")
+    ;; value has been forced and persisted
+    (check-false (fix-entry? (dict-ref t :b)))
+    (check-equal? (dict-ref t :b) "ab"))
 
-(module+ ex
-
-  (define m {(:b "B")
-             (:c (fix (~a
-                       (gett top :a)
-                       (gett top :b)
-                       (gett this :b)
-                       "c"
-                       (gett top :d))))
-             (:d "d")})
-
-  (define tt {m
-              (:a "a")
-              (:b "b")})
-
-  (check-pred fix-entry? (meta-dict-ref tt :c))
-  (check-equal? (gett tt :a) "a")
-  (check-equal? (gett tt :c) "abBcd")
-  (check-false (fix-entry? (meta-dict-ref tt :c)))
-  (check-equal? (meta-dict-ref tt :c) "abBcd"))
+  (test-case "fix: compute with top and this in metatable"
+    (define/checked m {(:b "B")
+                       (:c (fix (~a
+                                 (gett top :a)
+                                 (gett top :b)
+                                 (gett this :b)
+                                 "c"
+                                 (gett top :d))))
+                       (:d "d")})
+    (define/checked tt {m
+                        (:a "a")
+                        (:b "b")})
+    (check-pred fix-entry? (meta-dict-ref tt :c))
+    (check-equal? (gett tt :a) "a")
+    (check-equal? (gett tt :c) "abBcd")
+    (check-false (fix-entry? (meta-dict-ref tt :c)))
+    (check-equal? (meta-dict-ref tt :c) "abBcd"))
 
 
-(example
- (define m {(:a "a")})
- (define mm {m
-             (:a (fix (~a (next)
-                          (gett top :b)
-                          (gett this :b))))
-             (:b "b")})
- (define t {mm})
+  (test-case "fix: compute with next delegation"
+    (define/checked m {(:a "a")})
+    (define/checked mm {m
+                        (:a (fix (~a (next)
+                                     (gett top :b)
+                                     (gett this :b))))
+                        (:b "b")})
+    (define/checked t {mm})
 
- (check-pred undefined? (dict-ref t :a))
- (check-pred fix-entry? (meta-dict-ref t :a))
- (check-equal? (gett t :b) "b")
- (check-equal? (gett t :a) "abb")
- (check-equal? (meta-dict-ref t :a) "abb"))
+    (check-pred undefined? (dict-ref t :a))
+    (check-pred fix-entry? (meta-dict-ref t :a))
+    (check-equal? (gett t :b) "b")
+    (check-equal? (gett t :a) "abb")
+    (check-equal? (meta-dict-ref t :a) "abb"))
+
+  #;(test-case "fix: compute with top, this, next and <get> procedure"
+      (define mt {(:prefix "0")
+                  (:<get> (λ (t key #:top top #:this this #:next next)
+                            ;; compute with delegation
+                            (define v (~a (meta-dict-ref this :prefix) (next)))
+                            ;; cache result on the instance (not mt!)
+                            (dict-set! this key v)
+                            v))
+                  (:b "b")
+                  (:c "c")})
+      (define t {mt (:a "a")})
+      (check-pred undefined? (dict-ref t :b))
+      (check-pred undefined? (dict-ref t :c))
+      (check-equal? (gett t :a) "a")
+      (check-equal? (gett t :b) "0b")
+      (check-equal? (gett t :c) "0c")
+      (check-equal? (dict-ref t :b) "0b")
+      (check-equal? (dict-ref t :c) "0c"))
+
+  #;(test-case "fix: compute with top, this, next and <get> table"
+    (define/checked t<get>table (make-table #;t (ht) #;mt (make-table (ht (:<get> t)) undefined)))
+    (check-eq? (get t<get>table :a) 1)
+    (check-eq? (get t<get>table :b) 2)
+    (check-pred undefined? (get t<get>table :c))))
+
 
 (comment
  ;; on constructors
@@ -608,112 +645,6 @@
            (get tv (next-key) #:top top #:this tv)
            (error "expected a table")))
      v))
-
-(comment
-
- ;; TODO should I bother replacing manual continuation-passing style in gett with something like
- ;; kond below? Seems to work on simple examples but fails in gett. It is a cool macro problem.
- ;; Wonder if there's a simple solution that relies on call-with-composable-continuation
-
- (example
-  ;; idea
-  (kond
-   (c1 f1)
-   (c2 f2)
-   (c3 f3))
-  ;; =>
-  (let ((continue (thunk (void))))
-    (let ((continue (thunk
-                     (cond
-                       (c3 f3)
-                       (else (continue))))))
-      (let ((continue (thunk
-                       (cond
-                         (c2 f2)
-                         (else (continue))))))
-        (let ((continue (thunk
-                         (cond
-                           (c1 f1)
-                           (else (continue))))))
-          (continue))))))
-
-
- (define-for-syntax (donk #:continue continue clauses)
-   (match clauses
-     ((list clause)
-      (with-syntax ((clause clause))
-        #`(let ((continue (thunk
-                           (cond
-                             clause
-                             (else (#,continue))))))
-
-            (continue))))
-
-     ((list-rest clause clauses)
-      (with-syntax ((next-continue (datum->syntax (car clauses) 'continue))
-                    (continuations (donk #:continue #'continue clauses))
-                    (cond-expr  (syntax-parse clause
-                                  #:literals (else)
-                                  ((else e) #'(cond (else e)))
-                                  (clause #`(cond
-                                              clause
-                                              (else (#,continue)))))))
-        #`(let ((next-continue (thunk cond-expr)))
-            continuations)))))
-
- (define-syntax (kond stx)
-   (syntax-parse stx
-     ((_) #'(cond))
-     ((_ clause) #'(cond clause))
-     ((_ . clauses)
-      (let ((clauses (reverse (syntax->list #'clauses))))
-        (with-syntax ((continue (datum->syntax (car clauses) 'continue))
-                      (continuations (donk #:continue #'continue clauses)))
-          (syntax/loc stx
-            (let ((continue (thunk (void))))
-              continuations)))))))
-
- (example
-  (kond
-   (1 (+ 1 (continue)))
-   (2 2))
-
-  (kond
-   (1 (+ 1 (continue)))
-   (2 (+ 2 (continue)))
-   (3 3))
-
-  (kond
-   (1 (+ 1 (continue)))
-   (else 2)))
-
- (define (gett t k #:top [top t] #:this [this t] #:next [next (thunk (error "no next"))])
-   ;; TODO is it possible to detect when we go into infinite loop?
-   ;; Somehow keep track of t => k invocation? Part of provenance
-   ;; tracking? I probably can't merrily use tables with fix entries as
-   ;; hash keys?
-
-   (let ((mt (table-meta t))
-         ;; we rely on meta-dict-ref returning undefined when mt is not a table
-         (metamethod (meta-dict-ref t :<get>)))
-     (kond
-      ((dict-has-key? t k) (let ((v (dict-ref t k)))
-                             (if (fix-entry? v)
-                                 (let ((fixed (v top this continue)))
-                                   (dict-set! t k fixed)
-                                   ;; TODO instead of replacing key I could
-                                   ;; set-fix-entry-value! like caching
-                                   fixed)
-                                 v)))
-      ((table? metamethod)  (in "<get> table") (gett metamethod k #:top top #:this metamethod #:next continue))
-      ((procedure? metamethod) (in "<get> procedure") (metamethod t k #:top top #:this this #:next continue))
-      ((undefined? metamethod) (if (table? mt)
-                                   (begin
-                                     (in "<get> undefined => meta")
-                                     ;; should next be #f (we start over) or error?
-                                     (gett mt k #:top top #:this mt #:next (thunk (error "no next"))))
-                                   undefined))
-      (else (raise-argument-error '<get> "table or procedure" metamethod))))))
 
 ;;* isa? --------------------------------------------------------- *;;
 
@@ -1384,3 +1315,113 @@
     (check-true (isa? ts <mt1>))
     (check-true (isa? ts <mt2>))
     (check-true (isa? ts <table>))))
+
+
+;;* Experiments -------------------------------------------------- *;;
+
+
+(comment
+
+ ;; TODO should I bother replacing manual continuation-passing style in gett with something like
+ ;; kond below? Seems to work on simple examples but fails in gett. It is a cool macro problem.
+ ;; Wonder if there's a simple solution that relies on call-with-composable-continuation
+
+ (example
+  ;; idea
+  (kond
+   (c1 f1)
+   (c2 f2)
+   (c3 f3))
+  ;; =>
+  (let ((continue (thunk (void))))
+    (let ((continue (thunk
+                     (cond
+                       (c3 f3)
+                       (else (continue))))))
+      (let ((continue (thunk
+                       (cond
+                         (c2 f2)
+                         (else (continue))))))
+        (let ((continue (thunk
+                         (cond
+                           (c1 f1)
+                           (else (continue))))))
+          (continue))))))
+
+
+ (define-for-syntax (donk #:continue continue clauses)
+   (match clauses
+     ((list clause)
+      (with-syntax ((clause clause))
+        #`(let ((continue (thunk
+                           (cond
+                             clause
+                             (else (#,continue))))))
+
+            (continue))))
+
+     ((list-rest clause clauses)
+      (with-syntax ((next-continue (datum->syntax (car clauses) 'continue))
+                    (continuations (donk #:continue #'continue clauses))
+                    (cond-expr  (syntax-parse clause
+                                  #:literals (else)
+                                  ((else e) #'(cond (else e)))
+                                  (clause #`(cond
+                                              clause
+                                              (else (#,continue)))))))
+        #`(let ((next-continue (thunk cond-expr)))
+            continuations)))))
+
+ (define-syntax (kond stx)
+   (syntax-parse stx
+     ((_) #'(cond))
+     ((_ clause) #'(cond clause))
+     ((_ . clauses)
+      (let ((clauses (reverse (syntax->list #'clauses))))
+        (with-syntax ((continue (datum->syntax (car clauses) 'continue))
+                      (continuations (donk #:continue #'continue clauses)))
+          (syntax/loc stx
+            (let ((continue (thunk (void))))
+              continuations)))))))
+
+ (example
+  (kond
+   (1 (+ 1 (continue)))
+   (2 2))
+
+  (kond
+   (1 (+ 1 (continue)))
+   (2 (+ 2 (continue)))
+   (3 3))
+
+  (kond
+   (1 (+ 1 (continue)))
+   (else 2)))
+
+ (define (gett t k #:top [top t] #:this [this t] #:next [next (thunk (error "no next"))])
+   ;; TODO is it possible to detect when we go into infinite loop?
+   ;; Somehow keep track of t => k invocation? Part of provenance
+   ;; tracking? I probably can't merrily use tables with fix entries as
+   ;; hash keys?
+
+   (let ((mt (table-meta t))
+         ;; we rely on meta-dict-ref returning undefined when mt is not a table
+         (metamethod (meta-dict-ref t :<get>)))
+     (kond
+      ((dict-has-key? t k) (let ((v (dict-ref t k)))
+                             (if (fix-entry? v)
+                                 (let ((fixed (v top this continue)))
+                                   (dict-set! t k fixed)
+                                   ;; TODO instead of replacing key I could
+                                   ;; set-fix-entry-value! like caching
+                                   fixed)
+                                 v)))
+      ((table? metamethod)  (in "<get> table") (gett metamethod k #:top top #:this metamethod #:next continue))
+      ((procedure? metamethod) (in "<get> procedure") (metamethod t k #:top top #:this this #:next continue))
+      ((undefined? metamethod) (if (table? mt)
+                                   (begin
+                                     (in "<get> undefined => meta")
+                                     ;; should next be #f (we start over) or error?
+                                     (gett mt k #:top top #:this mt #:next (thunk (error "no next"))))
+                                   undefined))
+      (else (raise-argument-error '<get> "table or procedure" metamethod))))))
