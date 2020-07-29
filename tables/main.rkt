@@ -445,13 +445,25 @@
          ;; we rely on meta-dict-ref returning undefined when mt is not a table
          (metamethod (meta-dict-ref t :<get>)))
 
-     (define (delegate-to-<mt>)
-       (if (table? mt)
-           (begin
-             (in "metatable => recurse")
-             ;; should next be #f (we start over) or error?
-             (get mt k #:top top #:this mt #:next (thunk (error "no next"))))
-           undefined))
+     ;; NOTE Following is almost (cond clause-I clause-II clause-III clause-IV clause-V). We split
+     ;; into thunks so we can implement delegation by binding each to next as needed.
+
+     (define (try-table-proper-or-delegate)
+       (cond
+         ;; I: check if key is present in the table itself
+         ((dict-has-key? t k)
+          ;; (in "table => value")
+          (let ((v (dict-ref t k)))
+            (if (fix-entry? v)
+                (let ((fixed (v top this delegate-to-<get>)))
+                  (dict-set! t k fixed)
+                  ;; TODO instead of replacing key I could
+                  ;; set-fix-entry-value! like caching
+                  fixed)
+                v)))
+
+         (else
+          (delegate-to-<get>))))
 
      (define (delegate-to-<get>)
        (cond
@@ -478,23 +490,16 @@
           ;; V: <get> is present but fails contract
           (raise-argument-error '<get> "table or procedure" metamethod))))
 
-     (cond
+     (define (delegate-to-<mt>)
+       (if (table? mt)
+           (begin
+             (in "metatable => recurse")
+             ;; should next be #f (we start over) or error?
+             (get mt k #:top top #:this mt #:next (thunk (error "no next"))))
+           undefined))
 
-       ;; I: check if key is present in the table itself
-       ((dict-has-key? t k)
-        ;; (in "table => value")
-        (let ((v (dict-ref t k)))
-          (if (fix-entry? v)
-              (let ((fixed (v top this delegate-to-<get>)))
-                (dict-set! t k fixed)
-                ;; TODO instead of replacing key I could
-                ;; set-fix-entry-value! like caching
-                fixed)
-              v)))
-
-       ;; II or III or IV or V
-       (else
-        (delegate-to-<get>))))])
+     ;; body
+     (try-table-proper-or-delegate))])
 
 
 (struct fix-entry (lambda)
