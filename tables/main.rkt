@@ -431,69 +431,70 @@
   ;; (sleep 1)
   (void))
 
-(define (get t k #:top [top t] #:this [this t] #:next [next (thunk (error "no next"))])
-  ;; TODO is it possible to detect when we go into infinite loop?
-  ;; Somehow keep track of t => k invocation? Part of provenance
-  ;; tracking? I probably can't merrily use tables with fix entries as
-  ;; hash keys?
+;; TODO is it possible to detect when we go into infinite loop? Somehow keep track of t => k
+;; invocation? Part of provenance tracking? I probably can't merrily use tables with fix entries as
+;; hash keys?
 
-  ;; TODO we cannot assume t is a table. Best perform (get t) before the following? Assuming get
-  ;; with a single argument wraps native types in appropriate table. Or contract t to implement a
-  ;; dictionary interface and dict-ref before trying to get meta?
-  (let ((mt (table-meta t))
-        ;; we rely on meta-dict-ref returning undefined when mt is not a table
-        (metamethod (meta-dict-ref t :<get>)))
+(define/match (get t #:top [top t] #:this [this t] #:next [next (thunk (error "no next"))] . keys)
+  ;; (get v)
+  [(_ _top _this _next '()) t]
 
-    (define (delegate-to-<mt>)
-      (if (table? mt)
-          (begin
-            (in "metatable => recurse")
-            ;; should next be #f (we start over) or error?
-            (get mt k #:top top #:this mt #:next (thunk (error "no next"))))
-          undefined))
+  ;; (get t k)
+  [(t top this next `(,k))
+   (let ((mt (table-meta t))
+         ;; we rely on meta-dict-ref returning undefined when mt is not a table
+         (metamethod (meta-dict-ref t :<get>)))
 
-    (define (delegate-to-<get>)
-      (cond
+     (define (delegate-to-<mt>)
+       (if (table? mt)
+           (begin
+             (in "metatable => recurse")
+             ;; should next be #f (we start over) or error?
+             (get mt k #:top top #:this mt #:next (thunk (error "no next"))))
+           undefined))
 
-        ;; II: if <get> metamethod is a table recurse there
-        ((table? metamethod)
-         (in "<get> table => recurse")
-         ;; NOTE we could instead delegate to the next clause i.e. <get> procedure, but with tables
-         ;; doubling as procedures this may be more confusing than its worth, so we delegate to <mt>
-         (get metamethod k #:top top #:this metamethod #:next delegate-to-<mt>))
+     (define (delegate-to-<get>)
+       (cond
+
+         ;; II: if <get> metamethod is a table recurse there
+         ((table? metamethod)
+          (in "<get> table => recurse")
+          ;; NOTE we could instead delegate to the next clause i.e. <get> procedure, but with tables
+          ;; doubling as procedures this may be more confusing than its worth, so we delegate to <mt>
+          (get metamethod k #:top top #:this metamethod #:next delegate-to-<mt>))
 
 
-        ;; III: if <get> metamethod is a procedure invoke it
-        ((procedure? metamethod)
-         (in "<get> procedure => invoke")
-         (metamethod t k #:top top #:this this #:next delegate-to-<mt>))
+         ;; III: if <get> metamethod is a procedure invoke it
+         ((procedure? metamethod)
+          (in "<get> procedure => invoke")
+          (metamethod t k #:top top #:this this #:next delegate-to-<mt>))
 
-        ;; IV: if no <get> metamethod recurse into metatable
-        ((undefined? metamethod)
-         (in "<get> undefined => metatable")
-         (delegate-to-<mt>))
+         ;; IV: if no <get> metamethod recurse into metatable
+         ((undefined? metamethod)
+          (in "<get> undefined => metatable")
+          (delegate-to-<mt>))
 
-        (else
-         ;; V: <get> is present but fails contract
-         (raise-argument-error '<get> "table or procedure" metamethod))))
+         (else
+          ;; V: <get> is present but fails contract
+          (raise-argument-error '<get> "table or procedure" metamethod))))
 
-    (cond
+     (cond
 
-      ;; I: check if key is present in the table itself
-      ((dict-has-key? t k)
-       ;; (in "table => value")
-       (let ((v (dict-ref t k)))
-         (if (fix-entry? v)
-             (let ((fixed (v top this delegate-to-<get>)))
-               (dict-set! t k fixed)
-               ;; TODO instead of replacing key I could
-               ;; set-fix-entry-value! like caching
-               fixed)
-             v)))
+       ;; I: check if key is present in the table itself
+       ((dict-has-key? t k)
+        ;; (in "table => value")
+        (let ((v (dict-ref t k)))
+          (if (fix-entry? v)
+              (let ((fixed (v top this delegate-to-<get>)))
+                (dict-set! t k fixed)
+                ;; TODO instead of replacing key I could
+                ;; set-fix-entry-value! like caching
+                fixed)
+              v)))
 
-      ;; II or III or IV or V
-      (else
-       (delegate-to-<get>)))))
+       ;; II or III or IV or V
+       (else
+        (delegate-to-<get>))))])
 
 
 (struct fix-entry (lambda)
